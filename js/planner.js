@@ -1,4 +1,4 @@
-import { RECIPES, currentSeason } from "./data.js";
+import { RECIPES, currentSeason, matchesDiet } from "./data.js";
 
 const MEALS = ["breakfast", "lunch", "dinner"];
 
@@ -47,19 +47,40 @@ function candidatesFor(meal, ctx) {
       r.meal === meal &&
       isInSeason(r, ctx.season, ctx.seasonal) &&
       r.minutes <= ctx.cookTimeLimits[meal] + 0.001 &&
-      ctx.prefs[r.id] !== -1
+      ctx.prefs[r.id] !== -1 &&
+      matchesDiet(r, ctx.diet)
   );
 }
 
+/**
+ * Dietary needs (vegetarian/vegan/gluten-free) are a hard requirement, not
+ * a preference, so every fallback tier below still enforces them — cook
+ * time, season and even "not disliked" are relaxed first. Diet is only
+ * ever dropped as a true last resort, if literally nothing of that meal
+ * type in the catalog satisfies it.
+ */
 function pickRecipe(meal, ctx, exclude = new Set()) {
-  let pool = candidatesFor(meal, ctx).filter((r) => !exclude.has(r.id));
+  const withoutExcluded = (list) => list.filter((r) => !exclude.has(r.id));
+  const byMeal = RECIPES.filter((r) => r.meal === meal);
+  const byMealAndDiet = byMeal.filter((r) => matchesDiet(r, ctx.diet));
+
+  let pool = withoutExcluded(candidatesFor(meal, ctx));
   if (pool.length === 0) {
-    // relax the cook-time constraint before giving up entirely
-    pool = RECIPES.filter(
-      (r) => r.meal === meal && ctx.prefs[r.id] !== -1 && !exclude.has(r.id)
-    );
+    // relax cook-time, then season, then "not disliked" — diet stays enforced
+    pool = withoutExcluded(byMealAndDiet.filter((r) => isInSeason(r, ctx.season, ctx.seasonal) && ctx.prefs[r.id] !== -1));
   }
-  if (pool.length === 0) pool = RECIPES.filter((r) => r.meal === meal);
+  if (pool.length === 0) {
+    pool = withoutExcluded(byMealAndDiet.filter((r) => ctx.prefs[r.id] !== -1));
+  }
+  if (pool.length === 0) {
+    pool = withoutExcluded(byMealAndDiet);
+  }
+  if (pool.length === 0) {
+    // absolute last resort — no catalog recipe for this meal satisfies the
+    // diet at all; better to suggest something than show nothing.
+    pool = withoutExcluded(byMeal);
+  }
+  if (pool.length === 0) pool = byMeal;
 
   const scored = pool
     .map((r) => ({
@@ -82,6 +103,7 @@ export function generatePlan({ settings, prefs, history }) {
     maximizeEfficiency: settings.maximizeEfficiency,
     cookTimeLimits: settings.cookTime,
     planDays: settings.planDays,
+    diet: settings.diet,
     ingredientPool: new Set(),
   };
 
@@ -101,7 +123,7 @@ export function generatePlan({ settings, prefs, history }) {
     days.push(dayPlan);
   }
 
-  return { days, generatedAt: new Date().toISOString() };
+  return { days, generatedAt: new Date().toISOString(), source: "builtin" };
 }
 
 /** Replace a single slot (used by swipe / regenerate), respecting locks. */
@@ -127,6 +149,7 @@ export function regenerateSlot(plan, dayIndex, meal, { settings, prefs, history 
     maximizeEfficiency: settings.maximizeEfficiency,
     cookTimeLimits: settings.cookTime,
     planDays: settings.planDays,
+    diet: settings.diet,
     ingredientPool,
   };
   const recipe = pickRecipe(meal, ctx, exclude);

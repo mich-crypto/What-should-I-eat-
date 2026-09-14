@@ -1,9 +1,10 @@
 import { Store, DEFAULT_SETTINGS } from "./storage.js";
-import { RECIPES, recipeById, currentSeason } from "./data.js";
+import { RECIPES, recipeById, currentSeason, matchesDiet, displayTags, categorizeIngredient } from "./data.js";
 import { computeTargets, sumNutrition, pct } from "./nutrition.js";
 import { generatePlan, regenerateSlot } from "./planner.js";
 import { buildShoppingList } from "./shopping.js";
 import { suggestRecipeWithAI, generatePlanWithAI } from "./ai.js";
+import { suggestMealDbRecipe, generatePlanFromMealDb } from "./mealdb.js";
 import { VERSION, BUILD_DATE } from "./version.js";
 
 const view = document.getElementById("view");
@@ -83,8 +84,8 @@ function openRecipeModal(recipe) {
     </div>
     <div class="modal-body">
       <div class="modal-title">${recipe.title}</div>
-      <div class="modal-meta">${recipe.minutes} min · ${recipe.nutrition.kcal} kcal · ${recipe.nutrition.protein}g protein · ${recipe.nutrition.carbs}g carbs · ${recipe.nutrition.fat}g fat</div>
-      ${(recipe.tags || []).length ? `<div class="modal-tags">${recipe.tags.map((t) => `<span>${t}</span>`).join("")}</div>` : ""}
+      <div class="modal-meta">${minutesLabel(recipe)} · ${recipe.nutrition.kcal} kcal · ${recipe.nutrition.protein}g protein · ${recipe.nutrition.carbs}g carbs · ${recipe.nutrition.fat}g fat</div>
+      ${displayTags(recipe).length ? `<div class="modal-tags">${displayTags(recipe).map((t) => `<span>${t}</span>`).join("")}</div>` : ""}
 
       <div class="modal-section-title">Ingredients (1 serving)</div>
       <ul class="modal-ing-list">
@@ -128,14 +129,55 @@ function likedAndDislikedTitles() {
   };
 }
 
+/** True estimated minutes badge for MealDB recipes, which don't carry a real cook time. */
+function isEstimate(recipe) {
+  return recipe.id.startsWith("mealdb-");
+}
+function minutesLabel(recipe) {
+  return `${isEstimate(recipe) ? "~" : ""}${recipe.minutes} min`;
+}
+
+function registerSessionRecipes(recipes) {
+  recipes.forEach((r) => RECIPES.push(r)); // session-only, so recipeById() keeps working uniformly
+}
+
 /**
- * Build a full plan. When AI suggestions are on and a Gemini key is set,
- * Gemini (with Google Search grounding) sources real recipes from the web;
- * otherwise, and if that call fails for any reason, fall back to the
- * built-in catalog so the app always keeps working.
+ * Build a full plan from whichever "Recipe source" is selected in Settings
+ * (built-in catalog / TheMealDB / Gemini). Any failure — no network, no
+ * key, rate limit, bad response — falls back to the built-in catalog so
+ * the app always keeps working.
  */
 async function buildNewPlan() {
-  if (state.settings.useAI && state.settings.geminiKey) {
+  const source = state.settings.recipeSource;
+
+  if (source === "mealdb") {
+    toast("Finding recipes on TheMealDB…");
+    try {
+      const mealDbDays = await generatePlanFromMealDb({
+        days: state.settings.planDays,
+        diet: state.settings.diet,
+        cookTime: state.settings.cookTime,
+        categorizeIngredient,
+        matchesDiet,
+      });
+      const startDate = new Date();
+      const days = mealDbDays.map((day, i) => {
+        const date = new Date(startDate);
+        date.setDate(date.getDate() + i);
+        const entry = { date: date.toISOString().slice(0, 10) };
+        registerSessionRecipes(Object.values(day));
+        MEAL_ORDER.forEach((meal) => (entry[meal] = { recipeId: day[meal].id, locked: false }));
+        return entry;
+      });
+      return { days, generatedAt: new Date().toISOString(), source: "mealdb" };
+    } catch (err) {
+      console.error(err);
+      toast("TheMealDB unavailable — using built-in recipes instead");
+      return generatePlan(state);
+    }
+  }
+
+  if (source === "gemini" && state.settings.geminiKey) {
     toast("Asking Gemini to build your plan from the web…");
     try {
       const { likedTitles, dislikedTitles } = likedAndDislikedTitles();
@@ -148,16 +190,15 @@ async function buildNewPlan() {
         cookTime: state.settings.cookTime,
         likedTitles,
         dislikedTitles,
+        diet: state.settings.diet,
       });
       const startDate = new Date();
       const days = aiDays.map((day, i) => {
         const date = new Date(startDate);
         date.setDate(date.getDate() + i);
         const entry = { date: date.toISOString().slice(0, 10) };
-        MEAL_ORDER.forEach((meal) => {
-          RECIPES.push(day[meal]); // session-only, so recipeById() keeps working uniformly
-          entry[meal] = { recipeId: day[meal].id, locked: false };
-        });
+        registerSessionRecipes(Object.values(day));
+        MEAL_ORDER.forEach((meal) => (entry[meal] = { recipeId: day[meal].id, locked: false }));
         return entry;
       });
       return { days, generatedAt: new Date().toISOString(), source: "ai" };
@@ -167,12 +208,39 @@ async function buildNewPlan() {
       return generatePlan(state);
     }
   }
+
   return generatePlan(state);
 }
 
-/** Swap a single day/meal slot, preferring a fresh web-sourced recipe when AI is on. */
+/** Swap a single day/meal slot, preferring the selected online source when one is set. */
 async function rerollSlot(dayIndex, meal) {
-  if (state.settings.useAI && state.settings.geminiKey) {
+  const source = state.settings.recipeSource;
+  const currentIds = new Set(
+    state.plan.days.flatMap((d) => MEAL_ORDER.map((m) => d[m]?.recipeId).filter(Boolean))
+  );
+
+  if (source === "mealdb") {
+    toast("Asking TheMealDB for another option…");
+    try {
+      const recipe = await suggestMealDbRecipe({
+        meal,
+        diet: state.settings.diet,
+        excludeIds: currentIds,
+        categorizeIngredient,
+        matchesDiet,
+        minutesEstimate: state.settings.cookTime[meal],
+      });
+      registerSessionRecipes([recipe]);
+      state.plan.days[dayIndex][meal] = { recipeId: recipe.id, locked: false };
+      Store.setPlan(state.plan);
+      toast(`Swapped in ${recipe.title}`);
+      renderPlan();
+      return;
+    } catch (err) {
+      console.error(err);
+      toast("TheMealDB unavailable — picking from built-in recipes");
+    }
+  } else if (source === "gemini" && state.settings.geminiKey) {
     toast("Asking Gemini for another option…");
     try {
       const { dislikedTitles } = likedAndDislikedTitles();
@@ -183,8 +251,9 @@ async function rerollSlot(dayIndex, meal) {
         seasonal: state.settings.seasonal,
         season: currentSeason(),
         dislikedTitles,
+        diet: state.settings.diet,
       });
-      RECIPES.push(recipe);
+      registerSessionRecipes([recipe]);
       state.plan.days[dayIndex][meal] = { recipeId: recipe.id, locked: false };
       Store.setPlan(state.plan);
       toast(`Swapped in ${recipe.title}`);
@@ -195,6 +264,7 @@ async function rerollSlot(dayIndex, meal) {
       toast("Gemini unavailable — picking from built-in recipes");
     }
   }
+
   const recipe = regenerateSlot(state.plan, dayIndex, meal, state);
   Store.setPlan(state.plan);
   toast(`Swapped in ${recipe.title}`);
@@ -215,7 +285,7 @@ document.getElementById("btn-regenerate").addEventListener("click", async (e) =>
   e.currentTarget.disabled = true;
   state.plan = await buildNewPlan();
   Store.setPlan(state.plan);
-  toast(state.plan.source === "ai" ? "New plan sourced from the web" : "New plan generated");
+  toast(state.plan.source !== "builtin" ? "New plan sourced from the web" : "New plan generated");
   e.currentTarget.disabled = false;
   render();
 });
@@ -248,7 +318,7 @@ function mealRowHtml(day, dayIndex, meal, recipe) {
       <div class="meal-info">
         <div class="meal-label">${meal}</div>
         <div class="meal-title">${recipe.title}</div>
-        <div class="meal-meta">${recipe.minutes} min · ${recipe.nutrition.kcal} kcal</div>
+        <div class="meal-meta">${minutesLabel(recipe)} · ${recipe.nutrition.kcal} kcal</div>
       </div>
       <div class="meal-actions">
         <button class="mini-btn like-slot ${liked ? "liked" : ""}" title="Like">
@@ -346,7 +416,10 @@ function renderPlan() {
 
 function discoverPool() {
   return RECIPES.filter(
-    (r) => r.meal === state.discoverMeal && r.minutes <= state.settings.cookTime[state.discoverMeal] + 60
+    (r) =>
+      r.meal === state.discoverMeal &&
+      r.minutes <= state.settings.cookTime[state.discoverMeal] + 60 &&
+      matchesDiet(r, state.settings.diet)
   ).sort((a, b) => (state.prefs[b.id] || 0) - (state.prefs[a.id] || 0));
 }
 
@@ -411,13 +484,13 @@ function drawStack(pool) {
       card.style.zIndex = isTop ? 2 : 1;
       card.innerHTML = `
         <div class="photo" style="${recipe.image ? `background-image:url('${recipe.image}')` : ""}">
-          <span class="badge">${recipe.minutes} min</span>
+          <span class="badge">${minutesLabel(recipe)}</span>
           <span class="stamp like">Yum</span>
           <span class="stamp nope">Skip</span>
         </div>
         <div class="body">
           <div class="title">${recipe.title}</div>
-          <div class="meta">${recipe.nutrition.kcal} kcal · ${(recipe.tags || []).join(", ")}</div>
+          <div class="meta">${recipe.nutrition.kcal} kcal · ${displayTags(recipe).join(", ")}</div>
         </div>`;
       if (isTop) attachSwipeHandlers(card, pool);
       card.querySelector(".body").addEventListener("click", () => openRecipeModal(recipe));
@@ -620,6 +693,32 @@ function renderSettings() {
       </div>
     </div>
 
+    <h2 class="section-title">Dietary needs</h2>
+    <div class="card" style="padding:0 14px;">
+      <div class="toggle-row">
+        <div>
+          <div class="t-label">Vegetarian</div>
+          <div class="t-desc">No meat or fish, in the plan, Discover, and the shopping list.</div>
+        </div>
+        <div class="switch ${s.diet.vegetarian ? "on" : ""}" id="f-diet-vegetarian"><div class="knob"></div></div>
+      </div>
+      <div class="toggle-row">
+        <div>
+          <div class="t-label">Vegan</div>
+          <div class="t-desc">No meat, fish, dairy, or eggs.</div>
+        </div>
+        <div class="switch ${s.diet.vegan ? "on" : ""}" id="f-diet-vegan"><div class="knob"></div></div>
+      </div>
+      <div class="toggle-row">
+        <div>
+          <div class="t-label">Gluten-free</div>
+          <div class="t-desc">No wheat-based bread, pasta, or flour.</div>
+        </div>
+        <div class="switch ${s.diet.glutenFree ? "on" : ""}" id="f-diet-glutenfree"><div class="knob"></div></div>
+      </div>
+    </div>
+    <p class="hint">These are treated as hard requirements everywhere — the plan, Discover, and single-slot swaps never show a recipe that breaks them. This is a keyword-based check, not a certified allergen list — for a serious allergy, double-check the ingredients yourself.</p>
+
     <h2 class="section-title">Preferences</h2>
     <div class="card" style="padding:0 14px;">
       <div class="toggle-row">
@@ -652,20 +751,19 @@ function renderSettings() {
     </div>
 
     <h2 class="section-title">Recipe source</h2>
-    <div class="card" style="padding:0 14px;">
-      <div class="toggle-row">
-        <div>
-          <div class="t-label">Source recipes from the web (Gemini)</div>
-          <div class="t-desc">When on, "Regenerate plan" and "Try another" ask Gemini — with Google Search grounding — to find real recipes online matching your settings, instead of picking from the built-in list. Falls back to the built-in list if Gemini is unavailable.</div>
-        </div>
-        <div class="switch ${s.useAI ? "on" : ""}" id="f-useai"><div class="knob"></div></div>
+    <div class="card" style="padding:14px;">
+      <div class="segmented" id="f-recipesource">
+        <button data-v="builtin" class="${s.recipeSource === "builtin" ? "active" : ""}">Built-in</button>
+        <button data-v="mealdb" class="${s.recipeSource === "mealdb" ? "active" : ""}">Web (free)</button>
+        <button data-v="gemini" class="${s.recipeSource === "gemini" ? "active" : ""}">Gemini AI</button>
       </div>
+      <p class="hint" style="margin-top:12px; margin-bottom:0;" id="recipesource-desc"></p>
     </div>
-    <div class="field" style="margin-top:10px;">
+    <div class="field" style="margin-top:10px;" id="geminikey-field">
       <label>Gemini API key</label>
       <input type="password" id="f-geminikey" value="${s.geminiKey}" placeholder="Paste your API key">
     </div>
-    <p class="hint">Stored only on this device (localStorage) and sent directly to Google when a plan or suggestion is requested. Get a free key at aistudio.google.com. Without a key, the app uses its built-in sample recipes.</p>
+    <p class="hint" id="geminikey-hint">Stored only on this device (localStorage) and sent directly to Google when a plan or suggestion is requested. Get a free key at aistudio.google.com.</p>
 
     <button class="save-btn" id="btn-save">Save settings</button>
     <button class="link-btn" id="btn-reset">Reset all data on this device</button>
@@ -694,7 +792,26 @@ function renderSettings() {
 
   toggle("f-seasonal", (v) => (s.seasonal = v));
   toggle("f-efficiency", (v) => (s.maximizeEfficiency = v));
-  toggle("f-useai", (v) => (s.useAI = v));
+  toggle("f-diet-vegetarian", (v) => (s.diet.vegetarian = v));
+  toggle("f-diet-vegan", (v) => (s.diet.vegan = v));
+  toggle("f-diet-glutenfree", (v) => (s.diet.glutenFree = v));
+
+  const RECIPE_SOURCE_DESC = {
+    builtin: "Picks from the app's ~65 built-in sample recipes. Works fully offline; photos are approximate.",
+    mealdb: "Finds real recipes on TheMealDB (themealdb.com) — free, no account needed, and each one shows the actual photo of that dish. Nutrition and cook time are estimates, since TheMealDB doesn't provide them.",
+    gemini: "Asks Google's Gemini, with Search grounding, to find real recipes online matching your settings. Needs a free API key below.",
+  };
+  function updateRecipeSourceUI() {
+    document.getElementById("recipesource-desc").textContent = RECIPE_SOURCE_DESC[s.recipeSource];
+    const showGemini = s.recipeSource === "gemini";
+    document.getElementById("geminikey-field").hidden = !showGemini;
+    document.getElementById("geminikey-hint").hidden = !showGemini;
+  }
+  updateRecipeSourceUI();
+  segmented("f-recipesource", (v) => {
+    s.recipeSource = v;
+    updateRecipeSourceUI();
+  });
 
   view.querySelectorAll(".cooktime-slider").forEach((el) => {
     el.addEventListener("input", (e) => {
@@ -709,7 +826,7 @@ function renderSettings() {
     e.currentTarget.textContent = "Saving…";
     state.plan = await buildNewPlan();
     Store.setPlan(state.plan);
-    toast(state.plan.source === "ai" ? "Settings saved — plan sourced from the web" : "Settings saved — plan updated");
+    toast(state.plan.source !== "builtin" ? "Settings saved — plan sourced from the web" : "Settings saved — plan updated");
     state.tab = "plan";
     render();
   });

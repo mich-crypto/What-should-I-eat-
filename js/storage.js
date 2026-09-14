@@ -31,13 +31,24 @@ export const DEFAULT_SETTINGS = {
   seasonal: true,
   maximizeEfficiency: true,
   cookTime: { breakfast: 15, lunch: 30, dinner: 45 },
-  useAI: false,
+  diet: { vegetarian: false, vegan: false, glutenFree: false },
+  // Where recipes come from: 'builtin' (offline sample catalog),
+  // 'mealdb' (TheMealDB — free, no key, real per-recipe photos),
+  // or 'gemini' (Google AI with Search grounding, needs an API key).
+  recipeSource: "mealdb",
   geminiKey: "",
 };
 
 export const Store = {
   getSettings() {
-    return { ...DEFAULT_SETTINGS, ...read("settings", {}) };
+    const stored = read("settings", {});
+    const merged = { ...DEFAULT_SETTINGS, ...stored };
+    // Migrate the old on/off Gemini toggle (pre-1.4.0) to the new 3-way
+    // recipeSource setting, so anyone who already turned it on keeps it.
+    if (stored.useAI === true && stored.recipeSource === undefined) {
+      merged.recipeSource = "gemini";
+    }
+    return merged;
   },
   setSettings(s) {
     write("settings", s);

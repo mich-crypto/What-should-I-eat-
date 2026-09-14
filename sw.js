@@ -11,7 +11,7 @@
 // page's controllerchange listener (in index.html) reloads it once, so a
 // push reaches anyone with the app already open without them doing
 // anything.
-const CACHE_VERSION = "1.3.1";
+const CACHE_VERSION = "1.4.0";
 const CACHE = `wsie-shell-v${CACHE_VERSION}`;
 const SHELL = [
   "./",
@@ -24,6 +24,7 @@ const SHELL = [
   "./js/planner.js",
   "./js/shopping.js",
   "./js/ai.js",
+  "./js/mealdb.js",
   "./js/version.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
