@@ -1,7 +1,18 @@
 // Minimal offline shell so the installed Home Screen app opens instantly
 // even with a flaky connection. Recipe photos and any AI calls still need
 // the network; only the app shell is cached.
-const CACHE = "wsie-shell-v1";
+//
+// CACHE_VERSION must match js/version.js's VERSION on every deploy. Bumping
+// it is what makes an update "count": the browser only ever re-fetches
+// sw.js itself (served with Cache-Control: no-cache, see _headers), and a
+// byte-for-byte-identical sw.js is treated as no update at all — a new
+// version string is the change that makes it register as one. That then
+// triggers install -> activate -> old cache dropped -> the already-open
+// page's controllerchange listener (in index.html) reloads it once, so a
+// push reaches anyone with the app already open without them doing
+// anything.
+const CACHE_VERSION = "1.4.0";
+const CACHE = `wsie-shell-v${CACHE_VERSION}`;
 const SHELL = [
   "./",
   "./index.html",
@@ -13,6 +24,8 @@ const SHELL = [
   "./js/planner.js",
   "./js/shopping.js",
   "./js/ai.js",
+  "./js/mealdb.js",
+  "./js/version.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",

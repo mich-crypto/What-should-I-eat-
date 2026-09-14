@@ -64,36 +64,63 @@ the same as running it locally.
   household size, grouped by aisle/category, with a tag on any ingredient
   reused across multiple meals.
 - **Settings tab** — personal details for the nutrition target, household
-  size, plan length, a "seasonal ingredients" toggle, a "maximize shopping
-  efficiency" toggle (biases recipe selection toward ingredient reuse), a
-  per-meal cook-time limit, and the Gemini API key/toggle described below.
+  size, plan length, dietary needs (vegetarian/vegan/gluten-free — enforced
+  everywhere, not just a filter you have to remember), a "seasonal
+  ingredients" toggle, a "maximize shopping efficiency" toggle, a per-meal
+  cook-time limit, and the recipe source described below.
 - **Recipe detail** — tapping any meal (in the Plan tab or Discover) opens a
   sheet with the photo, macros, full ingredient list, step-by-step
-  instructions, and (for AI-sourced recipes) a note on where it was found.
+  instructions, and (for web-sourced recipes) a note on where it came from.
 
 ## Where recipes come from
 
-- **Built-in catalog** (`js/data.js`, ~65 recipes across breakfast/lunch/
-  dinner) — used whenever AI sourcing is off, no API key is set, or a
-  Gemini call fails. This is what makes the app fully usable offline out
-  of the box.
-- **Gemini, grounded in Google Search** (`js/ai.js`) — turn on "Source
-  recipes from the web" in Settings and add a free Gemini API key
-  (aistudio.google.com), and "Regenerate plan" / "Try another" instead ask
-  Gemini 2.5 Flash, with Google Search grounding enabled, to find real
-  recipes online that match your cook-time limits, season, household size,
-  and liked/disliked dishes. The call happens directly from the browser
-  (no backend) and returns structured JSON (title, ingredients, steps,
-  nutrition) that slots into the exact same recipe shape the built-in
-  catalog uses — the rest of the app doesn't know the difference.
-  Search grounding is a metered feature on Gemini's API; check current
-  pricing/quotas for your key if you plan to regenerate plans often.
-- Swapping in a dedicated recipe API (Spoonacular, Edamam, TheMealDB, etc.)
-  instead of/alongside Gemini is straightforward for the same reason —
-  match the same recipe shape and nothing else in the app needs to change.
-- Recipe photos currently link to Unsplash CDN URLs as placeholders;
-  AI-sourced recipes show a plain color block instead since there's no
-  stock photo for a dish just pulled from the web.
+Pick one in Settings → Recipe source:
+
+- **TheMealDB** (`js/mealdb.js`) — **the default.** A free, keyless public
+  recipe API (themealdb.com). "Regenerate plan" / "Try another" fetch a
+  real recipe matching the meal type and your dietary settings, and —
+  unlike the built-in catalog's approximate stock photos — the photo shown
+  is the actual photo of that exact dish. Trade-off: TheMealDB doesn't
+  provide nutrition or cook-time data (or a breakfast/lunch/dinner split
+  beyond "Breakfast" vs. everything else), so those are clearly-labeled
+  estimates, and being a crowdsourced database its data is occasionally a
+  little inconsistent (e.g. a title mentioning an ingredient the listed
+  ingredients don't include).
+- **Built-in catalog** (`js/data.js`, ~65 recipes) — fully offline, and
+  what every recipe source falls back to if a live call fails for any
+  reason (no network, rate limit, bad response). Photos here are matched
+  to the dish by keyword (curry → a curry photo, salad → a salad photo,
+  etc.) rather than being the specific dish's real photo, since there
+  aren't 65 unique stock photos to give each recipe its own.
+- **Gemini, grounded in Google Search** (`js/ai.js`) — needs a free API key
+  (aistudio.google.com). Asks Gemini 2.5 Flash, with Google Search
+  grounding enabled, to find real recipes online matching your cook-time
+  limits, season, dietary needs, household size, and liked/disliked
+  dishes. No photo is available for these (Gemini doesn't return one), so
+  the UI shows a plain color block instead. Search grounding is a metered
+  feature on Gemini's API; check current pricing/quotas if you plan to
+  regenerate plans often.
+
+All three return the exact same recipe shape (title, ingredients, steps,
+nutrition, tags), so the rest of the app — planner, shopping list, swipe
+UI, dietary filtering — doesn't know or care which source a recipe came
+from. Swapping in another dedicated recipe API (Spoonacular, Edamam, etc.)
+instead of/alongside these is a matter of matching that same shape.
+
+## Dietary needs (vegetarian / vegan / gluten-free)
+
+Turned on in Settings, these are treated as hard requirements, not soft
+preferences — checked in the planner, Discover, and single-slot "try
+another" alike, and enforced regardless of which recipe source is active
+(the constraint is also written into the Gemini/TheMealDB prompts and
+query, then re-checked locally against the ingredients that come back).
+Vegetarian/vegan are derived from each ingredient's category (no
+`Meat`/`Fish`, and for vegan no `Dairy` either — eggs are filed under
+`Dairy` in this app's ingredient categories, which conveniently makes that
+check correct without extra bookkeeping). Gluten-free is a keyword check
+against ingredient names (flour, bread, pasta, etc.) — a reasonable
+approximation, but not a certified allergen list; double-check ingredients
+yourself for a serious allergy.
 
 ## Project structure
 
@@ -108,6 +135,24 @@ js/nutrition.js      BMR/TDEE + macro targets
 js/planner.js        Weekly plan generation & single-slot regeneration
 js/shopping.js       Ingredient aggregation into a shopping list
 js/ai.js             Optional Gemini-powered recipe suggestions
+js/mealdb.js          TheMealDB integration (default recipe source)
 js/app.js            UI rendering, swipe gestures, event wiring
+js/version.js        App version shown in Settings
 icons/               Generated app icons (apple-touch-icon + PWA icons)
 ```
+
+## Versioning & auto-update
+
+The version shown at the bottom of the Settings tab comes from
+`js/version.js`. **Bump `VERSION` there and `CACHE_VERSION` at the top of
+`sw.js` together on every deploy** — same value in both places. That's what
+makes an update "count": a new cache name means the service worker's
+`activate` step drops the old cached app shell and fetches the new one.
+
+Nothing further to run — a phone with the app already open (or added to
+the Home Screen) picks the update up on its own:
+1. The page checks for a new `sw.js` whenever it regains focus, and hourly
+   while left open.
+2. If the version changed, the new service worker installs, takes over
+   immediately (`skipWaiting` + `clients.claim()`), and the page reloads
+   itself once to pick up the new files — no manual refresh needed.

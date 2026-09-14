@@ -21,23 +21,94 @@ export function currentSeason(date = new Date()) {
 
 const img = (id) => `https://images.unsplash.com/${id}?w=900&q=70&auto=format&fit=crop`;
 
-// A handful of placeholder food photos, cycled across the catalog. Swap
-// these for real per-recipe photography once recipes come from a live API.
-const PHOTOS = [
-  "photo-1490645935967-10de6ba17061",
-  "photo-1512058564366-18510be2db19",
-  "photo-1476718406336-bb5a9690ee2a",
-  "photo-1512621776951-a57141f2eefd",
-  "photo-1525351484163-7529414344d8",
-  "photo-1467003909585-2f8a72700288",
-  "photo-1546069901-ba9599a7e63c",
-  "photo-1547592166-23ac45744acd",
-  "photo-1504674900247-0877df9cc836",
-  "photo-1555939594-58d7cb561ad1",
-  "photo-1540189549336-e6e99c3679fe",
+// A small, hand-picked photo per *dish type* (not per recipe — there aren't
+// 65 unique stock photos to give each recipe its own). photoFor() matches a
+// recipe's title against these buckets so a curry at least shows a curry
+// and a salad shows a salad, instead of a purely round-robin assignment.
+// This is still an approximation: for a photo that actually matches the
+// specific dish, switch "Recipe source" to TheMealDB or Gemini in Settings
+// — both return the real photo for the exact recipe, not a placeholder.
+const PHOTO_BUCKETS = [
+  { match: /oat|granola|muesli|porridge|chia|smoothie/i, photo: "photo-1490645935967-10de6ba17061" },
+  { match: /toast|sandwich|bagel|avocado|banh mi|blt/i, photo: "photo-1512058564366-18510be2db19" },
+  { match: /egg|omelette|shakshuka|frittata|huevos/i, photo: "photo-1476718406336-bb5a9690ee2a" },
+  { match: /pancake|waffle|french toast/i, photo: "photo-1512621776951-a57141f2eefd" },
+  { match: /salad|tabbouleh|caprese(?!.*pasta)/i, photo: "photo-1525351484163-7529414344d8" },
+  { match: /pasta|spaghetti|lasagna|pizza|bolognese|mac/i, photo: "photo-1467003909585-2f8a72700288" },
+  { match: /curry|masala|tikka|katsu|coconut/i, photo: "photo-1546069901-ba9599a7e63c" },
+  { match: /bowl|quinoa|grain|couscous|falafel|chickpea/i, photo: "photo-1547592166-23ac45744acd" },
+  { match: /salmon|fish|shrimp|scampi|poke|taco/i, photo: "photo-1504674900247-0877df9cc836" },
+  { match: /steak|beef|chili|pork|lamb/i, photo: "photo-1555939594-58d7cb561ad1" },
+  { match: /soup|stew|minestrone|chowder/i, photo: "photo-1540189549336-e6e99c3679fe" },
 ];
 let photoCursor = 0;
-const nextPhoto = () => img(PHOTOS[photoCursor++ % PHOTOS.length]);
+function photoFor(title) {
+  const bucket = PHOTO_BUCKETS.find((b) => b.match.test(title));
+  if (bucket) return img(bucket.photo);
+  return img(PHOTO_BUCKETS[photoCursor++ % PHOTO_BUCKETS.length].photo);
+}
+
+// ---------------------------------------------------------------- Diet flags
+//
+// Computed from ingredients rather than hand-tagged, so they stay correct
+// automatically for AI- and MealDB-sourced recipes too (both use the same
+// {name, qty, unit, category} ingredient shape). "Dairy" here also covers
+// eggs (see the category note in mk()'s callers) which conveniently makes
+// the vegan check correct without extra bookkeeping.
+const GLUTEN_KEYWORDS = [
+  "flour", "bread", "pasta", "spaghetti", "couscous", "lasagna", "bagel",
+  "ciabatta", "baguette", "crouton", "dough", "tortilla wrap", "soba",
+];
+export function isGlutenFree(recipe) {
+  return !recipe.ingredients.some((ing) => {
+    const n = ing.name.toLowerCase();
+    if (n.includes("noodle") && !n.includes("rice")) return true;
+    return GLUTEN_KEYWORDS.some((k) => n.includes(k));
+  });
+}
+export function isVegetarian(recipe) {
+  return !recipe.ingredients.some((ing) => ing.category === "Meat" || ing.category === "Fish");
+}
+export function isVegan(recipe) {
+  return isVegetarian(recipe) && !recipe.ingredients.some((ing) => ing.category === "Dairy");
+}
+export function matchesDiet(recipe, diet) {
+  if (!diet) return true;
+  if (diet.vegan && !isVegan(recipe)) return false;
+  if (diet.vegetarian && !isVegetarian(recipe)) return false;
+  if (diet.glutenFree && !isGlutenFree(recipe)) return false;
+  return true;
+}
+/** Diet labels for display, deduped against a recipe's own free-form tags. */
+export function dietTags(recipe) {
+  const t = [];
+  if (isVegan(recipe)) t.push("vegan");
+  else if (isVegetarian(recipe)) t.push("vegetarian");
+  if (isGlutenFree(recipe)) t.push("gluten-free");
+  return t;
+}
+export function displayTags(recipe) {
+  const skip = new Set(["vegan", "vegetarian", "gluten-free"]);
+  return [...dietTags(recipe), ...(recipe.tags || []).filter((t) => !skip.has(t))];
+}
+
+// Rough keyword categorizer for ingredient names that don't already carry
+// our category enum — used when parsing recipes from TheMealDB, whose
+// ingredient list is just free-text names.
+// \b-wrapped on every short/common word — otherwise substrings hide inside
+// unrelated ingredients (e.g. "rice" inside "price", "oat" inside "Goat").
+const CATEGORY_KEYWORDS = [
+  ["Meat", /chicken|\bbeef\b|\bpork\b|\blamb\b|\bgoat\b|bacon|sausage|turkey|mince|steak|\bham\b/i],
+  ["Fish", /fish|salmon|tuna|shrimp|prawn|\bcod\b|tilapia|crab|anchov|seafood/i],
+  ["Dairy", /milk|cheese|butter|cream|yog(h)?urt|\begg/i],
+  ["Bakery", /bread|tortilla|bagel|\bbun\b|\broll\b|pita|\bdough\b|baguette/i],
+  ["Grains", /\brice\b|pasta|flour|\boats?\b|noodle|couscous|quinoa|spaghetti|lasagna/i],
+  ["Produce", /onion|garlic|tomato|pepper|lettuce|spinach|potato|carrot|broccoli|cabbage|cucumber|lemon|lime|apple|banana|mango|herb|parsley|basil|chili|mushroom|avocado|ginger|celery|\bcorn\b/i],
+];
+export function categorizeIngredient(name) {
+  const found = CATEGORY_KEYWORDS.find(([, re]) => re.test(name));
+  return found ? found[0] : "Pantry";
+}
 
 /** Compact recipe builder — keeps the catalog below readable as data, not boilerplate. */
 function mk(id, title, meal, season, minutes, tags, nutrition, ingredients, steps) {
@@ -48,7 +119,7 @@ function mk(id, title, meal, season, minutes, tags, nutrition, ingredients, step
     season,
     minutes,
     tags,
-    image: nextPhoto(),
+    image: photoFor(title),
     nutrition: { kcal: nutrition[0], protein: nutrition[1], carbs: nutrition[2], fat: nutrition[3] },
     ingredients: ingredients.map(([name, qty, unit, category]) => ({ name, qty, unit, category })),
     steps,

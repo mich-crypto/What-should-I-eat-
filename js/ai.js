@@ -49,6 +49,14 @@ async function callGemini(apiKey, prompt, maxOutputTokens) {
 
 const RECIPE_SCHEMA = `{"title":"...","minutes":number,"ingredients":[{"name":"...","qty":number,"unit":"g|ml|pc|tsp|tbsp|clove|slice|pinch","category":"Produce|Meat|Fish|Dairy|Bakery|Grains|Pantry"}],"nutrition":{"kcal":number,"protein":number,"carbs":number,"fat":number},"steps":["..."],"sourceNote":"short mention of where this style of recipe is popular online"}`;
 
+function dietLine(diet) {
+  const needs = [];
+  if (diet?.vegan) needs.push("strictly vegan (no meat, fish, dairy, or eggs)");
+  else if (diet?.vegetarian) needs.push("strictly vegetarian (no meat or fish)");
+  if (diet?.glutenFree) needs.push("gluten-free (no wheat, barley, rye, regular pasta/bread/flour)");
+  return needs.length ? `- Must be ${needs.join(" and ")}. This is a hard requirement, not a preference.\n` : "";
+}
+
 function toRecipe(parsed, meal) {
   return {
     id: `ai-${meal}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -66,12 +74,12 @@ function toRecipe(parsed, meal) {
 }
 
 /** Single recipe idea for one slot (used by Discover's "spark" button). */
-export async function suggestRecipeWithAI({ apiKey, meal, minutesLimit, seasonal, season, dislikedTitles }) {
+export async function suggestRecipeWithAI({ apiKey, meal, minutesLimit, seasonal, season, dislikedTitles, diet }) {
   if (!apiKey) throw new Error("No Gemini API key set");
 
   const prompt = `Search the web for a real, popular home-cooked ${meal} recipe that takes ${minutesLimit} minutes or less to cook.
 ${seasonal ? `Prefer one built around ingredients that are in season during ${season} in a temperate climate.` : ""}
-Avoid recipes similar to: ${dislikedTitles.join(", ") || "none"}.
+${dietLine(diet)}Avoid recipes similar to: ${dislikedTitles.join(", ") || "none"}.
 Base it on an actual recipe you find, not a made-up one. Respond with ONLY minified JSON, no markdown fences, matching exactly this shape:
 ${RECIPE_SCHEMA}`;
 
@@ -93,6 +101,7 @@ export async function generatePlanWithAI({
   cookTime,
   likedTitles,
   dislikedTitles,
+  diet,
 }) {
   if (!apiKey) throw new Error("No Gemini API key set");
 
@@ -102,7 +111,7 @@ Constraints:
 - Lunch: ${cookTime.lunch} minutes or less to cook.
 - Dinner: ${cookTime.dinner} minutes or less to cook.
 ${seasonal ? `- Favor recipes built around ingredients in season during ${season} in a temperate climate.` : ""}
-- The person likes: ${likedTitles.join(", ") || "no strong preferences yet"} — lean toward similar dishes/cuisines where sensible.
+${dietLine(diet)}- The person likes: ${likedTitles.join(", ") || "no strong preferences yet"} — lean toward similar dishes/cuisines where sensible.
 - Avoid anything like: ${dislikedTitles.join(", ") || "none"}.
 - Vary the recipes across the plan (don't repeat the same dish on multiple days) and prefer some ingredient overlap between recipes in the same week, to keep the shopping list efficient.
 Respond with ONLY minified JSON, no markdown fences, no commentary, in exactly this shape (an array of ${days} day objects):
