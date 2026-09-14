@@ -58,29 +58,42 @@ the same as running it locally.
   running totals for calories/protein/carbs/fat plotted against a personal
   target (Mifflin-St Jeor BMR × activity level, adjustable goal).
 - **Discover tab** — Tinder-style swipe cards per meal type; swipe or tap to
-  like/skip, which feeds back into future plan generation. An optional
-  "spark" button asks Google's Gemini API for a fresh recipe idea.
+  like/skip, which feeds back into future plan generation. Tap a card's
+  title/details to see the full recipe.
 - **Shopping tab** — the whole plan's ingredients combined, scaled by
   household size, grouped by aisle/category, with a tag on any ingredient
   reused across multiple meals.
 - **Settings tab** — personal details for the nutrition target, household
   size, plan length, a "seasonal ingredients" toggle, a "maximize shopping
   efficiency" toggle (biases recipe selection toward ingredient reuse), a
-  per-meal cook-time limit, and an optional Gemini API key.
+  per-meal cook-time limit, and the Gemini API key/toggle described below.
+- **Recipe detail** — tapping any meal (in the Plan tab or Discover) opens a
+  sheet with the photo, macros, full ingredient list, step-by-step
+  instructions, and (for AI-sourced recipes) a note on where it was found.
 
-## Recipe data & AI, and what to swap in for production
+## Where recipes come from
 
-- `js/data.js` ships ~24 sample recipes so the app works fully offline out
-  of the box. Swap this for a live call to a recipe API (Spoonacular,
-  Edamam, TheMealDB, etc.) — every recipe object already matches the shape
-  `js/ai.js` produces, so the rest of the app (planner, shopping list,
-  swipe UI) needs no changes.
-- `js/ai.js` calls `generativelanguage.googleapis.com` (Gemini) directly
-  from the browser using a key the user pastes into Settings. That's fine
-  for a personal tool; for a shared/public deployment, proxy that call
-  through a small backend so the key isn't exposed client-side, and add
-  real rate limiting.
-- Recipe photos currently link to Unsplash CDN URLs as placeholders.
+- **Built-in catalog** (`js/data.js`, ~65 recipes across breakfast/lunch/
+  dinner) — used whenever AI sourcing is off, no API key is set, or a
+  Gemini call fails. This is what makes the app fully usable offline out
+  of the box.
+- **Gemini, grounded in Google Search** (`js/ai.js`) — turn on "Source
+  recipes from the web" in Settings and add a free Gemini API key
+  (aistudio.google.com), and "Regenerate plan" / "Try another" instead ask
+  Gemini 2.5 Flash, with Google Search grounding enabled, to find real
+  recipes online that match your cook-time limits, season, household size,
+  and liked/disliked dishes. The call happens directly from the browser
+  (no backend) and returns structured JSON (title, ingredients, steps,
+  nutrition) that slots into the exact same recipe shape the built-in
+  catalog uses — the rest of the app doesn't know the difference.
+  Search grounding is a metered feature on Gemini's API; check current
+  pricing/quotas for your key if you plan to regenerate plans often.
+- Swapping in a dedicated recipe API (Spoonacular, Edamam, TheMealDB, etc.)
+  instead of/alongside Gemini is straightforward for the same reason —
+  match the same recipe shape and nothing else in the app needs to change.
+- Recipe photos currently link to Unsplash CDN URLs as placeholders;
+  AI-sourced recipes show a plain color block instead since there's no
+  stock photo for a dish just pulled from the web.
 
 ## Project structure
 

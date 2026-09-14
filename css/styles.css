@@ -141,6 +141,7 @@ h2.section-title:first-child { margin-top: 4px; }
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   flex-shrink: 0;
 }
+.meal-thumb, .meal-info { cursor: pointer; }
 .meal-info { flex: 1; min-width: 0; }
 .meal-label {
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
@@ -335,6 +336,78 @@ h2.section-title:first-child { margin-top: 4px; }
 }
 
 .hint { font-size: 12px; color: var(--text-dim); margin: -6px 0 14px; line-height: 1.5; }
+
+/* ---------- Recipe detail modal ---------- */
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(15, 12, 9, 0.5);
+  display: flex; align-items: flex-end;
+  z-index: 60;
+}
+.modal-backdrop[hidden] { display: none; }
+.modal-sheet {
+  width: 100%;
+  max-height: 88vh;
+  background: var(--bg);
+  border-radius: 22px 22px 0 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: calc(24px + var(--safe-bottom));
+  animation: sheet-up 0.22s ease;
+}
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.modal-photo {
+  height: 220px;
+  background-size: cover; background-position: center;
+  background-color: color-mix(in srgb, var(--accent) 25%, var(--surface));
+  position: relative;
+}
+.modal-close {
+  position: absolute; top: calc(var(--safe-top) + 12px); right: 14px;
+  width: 34px; height: 34px; border-radius: 50%;
+  background: rgba(0,0,0,0.55); color: #fff; border: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-close svg { width: 16px; height: 16px; fill: currentColor; }
+.modal-body { padding: 18px 20px 4px; }
+.modal-title { font-size: 21px; font-weight: 800; margin-bottom: 4px; }
+.modal-meta { font-size: 13px; color: var(--text-dim); margin-bottom: 14px; }
+.modal-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.modal-tags span {
+  font-size: 11px; padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--text-dim);
+}
+.modal-section-title { font-size: 13px; font-weight: 700; margin: 18px 0 8px; }
+.modal-ing-list, .modal-step-list { margin: 0; padding: 0; list-style: none; }
+.modal-ing-list li {
+  display: flex; justify-content: space-between; gap: 10px;
+  padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px;
+}
+.modal-ing-list li:first-child { border-top: none; }
+.modal-ing-list .q { color: var(--text-dim); flex-shrink: 0; }
+.modal-step-list li {
+  display: flex; gap: 10px; padding: 8px 0; font-size: 14px; line-height: 1.4;
+}
+.modal-step-list .n {
+  width: 22px; height: 22px; border-radius: 50%; background: var(--accent);
+  color: #fff; font-size: 11px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.modal-source {
+  font-size: 12px; color: var(--text-dim); margin-top: 16px;
+  border-top: 1px solid var(--line); padding-top: 12px;
+}
+.modal-actions { display: flex; gap: 10px; padding: 18px 20px 0; }
+.modal-actions button {
+  flex: 1; padding: 12px; border-radius: 12px; font-size: 14px; font-weight: 600;
+  border: 1px solid var(--line); background: var(--surface); color: var(--text);
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.modal-actions button svg { width: 16px; height: 16px; fill: currentColor; }
+.modal-actions button.liked { color: var(--accent); border-color: var(--accent); }
 
 /* ---------- Toast ---------- */
 .toast {
