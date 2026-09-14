@@ -54,6 +54,27 @@
     <div class="modal-sheet" id="modal-sheet"></div>
   </div>
 
+  <div id="loading-overlay" class="loading-overlay" hidden>
+    <div class="loading-card">
+      <svg class="pot-anim" viewBox="0 0 120 110" width="92" height="84" aria-hidden="true">
+        <g class="steam">
+          <path class="steam-path s1" d="M42 44 C 37 36, 46 32, 41 22" />
+          <path class="steam-path s2" d="M60 44 C 55 34, 64 30, 59 18" />
+          <path class="steam-path s3" d="M78 44 C 73 36, 82 32, 77 22" />
+        </g>
+        <ellipse class="pot-lid" cx="60" cy="52" rx="34" ry="7" />
+        <rect class="pot-knob" x="56" y="43" width="8" height="8" rx="2" />
+        <path class="pot-body" d="M28 56 L92 56 L86 92 Q60 100 34 92 Z" />
+        <rect class="pot-handle-l" x="13" y="58" width="17" height="9" rx="4.5" />
+        <rect class="pot-handle-r" x="90" y="58" width="17" height="9" rx="4.5" />
+        <circle class="bubble b1" cx="46" cy="82" r="3" />
+        <circle class="bubble b2" cx="60" cy="87" r="2.5" />
+        <circle class="bubble b3" cx="74" cy="80" r="3" />
+      </svg>
+      <div class="loading-text" id="loading-text">Cooking up something…</div>
+    </div>
+  </div>
+
   <script type="module" src="js/app.js"></script>
   <script>
     // Register the offline app-shell worker, and make sure a new deploy

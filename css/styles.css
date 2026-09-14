@@ -414,6 +414,68 @@ h2.section-title:first-child { margin-top: 4px; }
 .modal-actions button svg { width: 16px; height: 16px; fill: currentColor; }
 .modal-actions button.liked { color: var(--accent); border-color: var(--accent); }
 
+/* ---------- Loading overlay (cooking-pot animation) ---------- */
+.loading-overlay {
+  position: fixed; inset: 0;
+  background: rgba(15, 12, 9, 0.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 70;
+}
+.loading-overlay[hidden] { display: none; }
+.loading-card {
+  background: var(--surface);
+  border-radius: 20px;
+  padding: 26px 30px;
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  box-shadow: 0 14px 34px rgba(0,0,0,0.28);
+  max-width: 78vw;
+}
+.loading-text {
+  font-size: 14px; font-weight: 600; color: var(--text); text-align: center;
+}
+
+.pot-anim .pot-body { fill: var(--accent); }
+.pot-anim .pot-handle-l, .pot-anim .pot-handle-r { fill: var(--accent); }
+.pot-anim .pot-knob { fill: var(--accent-2); transform-box: fill-box; transform-origin: center; }
+.pot-anim .pot-lid {
+  fill: var(--accent-2);
+  transform-box: fill-box; transform-origin: center;
+  animation: pot-lid-jiggle 1.1s ease-in-out infinite;
+}
+.pot-anim .steam-path {
+  fill: none; stroke: var(--text-dim); stroke-width: 3; stroke-linecap: round;
+  opacity: 0;
+  animation: pot-steam-rise 1.8s ease-in-out infinite;
+}
+.pot-anim .s1 { animation-delay: 0s; }
+.pot-anim .s2 { animation-delay: 0.4s; }
+.pot-anim .s3 { animation-delay: 0.8s; }
+.pot-anim .bubble {
+  fill: var(--bg); opacity: 0;
+  animation: pot-bubble-rise 1.6s ease-in infinite;
+}
+.pot-anim .b1 { animation-delay: 0.1s; }
+.pot-anim .b2 { animation-delay: 0.5s; }
+.pot-anim .b3 { animation-delay: 0.9s; }
+
+@keyframes pot-lid-jiggle {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-1.5px) rotate(-1.5deg); }
+}
+@keyframes pot-steam-rise {
+  0% { opacity: 0; transform: translateY(8px) scale(0.9); }
+  35% { opacity: 0.85; }
+  100% { opacity: 0; transform: translateY(-16px) scale(1.15); }
+}
+@keyframes pot-bubble-rise {
+  0% { opacity: 0; transform: translateY(0); }
+  25% { opacity: 0.9; }
+  100% { opacity: 0; transform: translateY(-16px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pot-anim .pot-lid, .pot-anim .steam-path, .pot-anim .bubble { animation: none; opacity: 0.6; }
+}
+
 /* ---------- Toast ---------- */
 .toast {
   position: fixed; left: 50%; bottom: calc(90px + var(--safe-bottom));

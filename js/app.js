@@ -10,6 +10,16 @@ import { VERSION, BUILD_DATE } from "./version.js";
 const view = document.getElementById("view");
 const topbarTitle = document.getElementById("topbar-title");
 const toastEl = document.getElementById("toast");
+const loadingOverlay = document.getElementById("loading-overlay");
+const loadingTextEl = document.getElementById("loading-text");
+
+function showLoading(text) {
+  loadingTextEl.textContent = text;
+  loadingOverlay.hidden = false;
+}
+function hideLoading() {
+  loadingOverlay.hidden = true;
+}
 
 let state = {
   tab: "plan",
@@ -151,7 +161,7 @@ async function buildNewPlan() {
   const source = state.settings.recipeSource;
 
   if (source === "mealdb") {
-    toast("Finding recipes on TheMealDB…");
+    showLoading("Finding recipes on TheMealDB…");
     try {
       const mealDbDays = await generatePlanFromMealDb({
         days: state.settings.planDays,
@@ -174,11 +184,13 @@ async function buildNewPlan() {
       console.error(err);
       toast("TheMealDB unavailable — using built-in recipes instead");
       return generatePlan(state);
+    } finally {
+      hideLoading();
     }
   }
 
   if (source === "gemini" && state.settings.geminiKey) {
-    toast("Asking Gemini to build your plan from the web…");
+    showLoading("Asking Gemini to build your plan from the web…");
     try {
       const { likedTitles, dislikedTitles } = likedAndDislikedTitles();
       const aiDays = await generatePlanWithAI({
@@ -206,6 +218,8 @@ async function buildNewPlan() {
       console.error(err);
       toast("Gemini unavailable — using built-in recipes instead");
       return generatePlan(state);
+    } finally {
+      hideLoading();
     }
   }
 
@@ -220,7 +234,7 @@ async function rerollSlot(dayIndex, meal) {
   );
 
   if (source === "mealdb") {
-    toast("Asking TheMealDB for another option…");
+    showLoading("Asking TheMealDB for another option…");
     try {
       const recipe = await suggestMealDbRecipe({
         meal,
@@ -239,9 +253,11 @@ async function rerollSlot(dayIndex, meal) {
     } catch (err) {
       console.error(err);
       toast("TheMealDB unavailable — picking from built-in recipes");
+    } finally {
+      hideLoading();
     }
   } else if (source === "gemini" && state.settings.geminiKey) {
-    toast("Asking Gemini for another option…");
+    showLoading("Asking Gemini for another option…");
     try {
       const { dislikedTitles } = likedAndDislikedTitles();
       const recipe = await suggestRecipeWithAI({
@@ -262,6 +278,8 @@ async function rerollSlot(dayIndex, meal) {
     } catch (err) {
       console.error(err);
       toast("Gemini unavailable — picking from built-in recipes");
+    } finally {
+      hideLoading();
     }
   }
 
@@ -282,11 +300,12 @@ document.getElementById("tabbar").addEventListener("click", (e) => {
 
 document.getElementById("btn-regenerate").addEventListener("click", async (e) => {
   if (state.tab !== "plan") return;
-  e.currentTarget.disabled = true;
+  const btn = e.currentTarget; // cache it — e.currentTarget is nulled out once the event finishes dispatching, before our `await` resumes
+  btn.disabled = true;
   state.plan = await buildNewPlan();
   Store.setPlan(state.plan);
   toast(state.plan.source !== "builtin" ? "New plan sourced from the web" : "New plan generated");
-  e.currentTarget.disabled = false;
+  btn.disabled = false;
   render();
 });
 
@@ -546,13 +565,13 @@ function swipeCurrent(pool, direction, cardEl) {
 }
 
 async function askAI(pool) {
-  if (!state.settings.useAI || !state.settings.geminiKey) {
-    toast("Add a Gemini API key in Settings to enable AI ideas");
+  if (state.settings.recipeSource !== "gemini" || !state.settings.geminiKey) {
+    toast("Switch Recipe source to Gemini AI in Settings (and add a key) to enable this");
     return;
   }
-  toast("Asking Gemini for an idea…");
+  showLoading("Asking Gemini for an idea…");
   try {
-    const dislikedTitles = RECIPES.filter((r) => state.prefs[r.id] === -1).map((r) => r.title);
+    const { dislikedTitles } = likedAndDislikedTitles();
     const recipe = await suggestRecipeWithAI({
       apiKey: state.settings.geminiKey,
       meal: state.discoverMeal,
@@ -560,14 +579,18 @@ async function askAI(pool) {
       seasonal: state.settings.seasonal,
       season: currentSeason(),
       dislikedTitles,
+      diet: state.settings.diet,
     });
-    RECIPES.push(recipe); // session-only; not persisted to the static catalog
+    registerSessionRecipes([recipe]);
     pool.unshift(recipe);
     state.discoverIndex = 0;
     drawStack(pool);
     toast(`Gemini suggests: ${recipe.title}`);
   } catch (err) {
+    console.error(err);
     toast("Couldn't reach Gemini — check your API key");
+  } finally {
+    hideLoading();
   }
 }
 

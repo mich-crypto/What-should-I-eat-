@@ -71,6 +71,10 @@ the same as running it locally.
 - **Recipe detail** — tapping any meal (in the Plan tab or Discover) opens a
   sheet with the photo, macros, full ingredient list, step-by-step
   instructions, and (for web-sourced recipes) a note on where it came from.
+- **Loading state** — whenever the app is waiting on TheMealDB or Gemini
+  (regenerating the plan, swapping a single slot, or Discover's "spark"
+  idea), a small animated cooking-pot overlay shows instead of a bare
+  spinner, since these calls can take a couple of seconds.
 
 ## Where recipes come from
 
