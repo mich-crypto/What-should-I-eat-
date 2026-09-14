@@ -109,5 +109,22 @@ js/planner.js        Weekly plan generation & single-slot regeneration
 js/shopping.js       Ingredient aggregation into a shopping list
 js/ai.js             Optional Gemini-powered recipe suggestions
 js/app.js            UI rendering, swipe gestures, event wiring
+js/version.js        App version shown in Settings
 icons/               Generated app icons (apple-touch-icon + PWA icons)
 ```
+
+## Versioning & auto-update
+
+The version shown at the bottom of the Settings tab comes from
+`js/version.js`. **Bump `VERSION` there and `CACHE_VERSION` at the top of
+`sw.js` together on every deploy** — same value in both places. That's what
+makes an update "count": a new cache name means the service worker's
+`activate` step drops the old cached app shell and fetches the new one.
+
+Nothing further to run — a phone with the app already open (or added to
+the Home Screen) picks the update up on its own:
+1. The page checks for a new `sw.js` whenever it regains focus, and hourly
+   while left open.
+2. If the version changed, the new service worker installs, takes over
+   immediately (`skipWaiting` + `clients.claim()`), and the page reloads
+   itself once to pick up the new files — no manual refresh needed.

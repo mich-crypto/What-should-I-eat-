@@ -4,6 +4,7 @@ import { computeTargets, sumNutrition, pct } from "./nutrition.js";
 import { generatePlan, regenerateSlot } from "./planner.js";
 import { buildShoppingList } from "./shopping.js";
 import { suggestRecipeWithAI, generatePlanWithAI } from "./ai.js";
+import { VERSION, BUILD_DATE } from "./version.js";
 
 const view = document.getElementById("view");
 const topbarTitle = document.getElementById("topbar-title");
@@ -642,6 +643,7 @@ function renderSettings() {
 
     <button class="save-btn" id="btn-save">Save settings</button>
     <button class="link-btn" id="btn-reset">Reset all data on this device</button>
+    <div class="version-footer">What Should I Eat · v${VERSION} · ${BUILD_DATE}</div>
   `;
 
   document.getElementById("f-name").addEventListener("input", (e) => (s.name = e.target.value));
