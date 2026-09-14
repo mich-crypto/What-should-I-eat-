@@ -5,5 +5,5 @@
 // service worker treat a deploy as an update (new cache name -> old cache
 // dropped -> already-open tabs get the new files automatically, see the
 // registration script in index.html).
-export const VERSION = "1.4.1";
+export const VERSION = "1.4.2";
 export const BUILD_DATE = "2026-09-14";
