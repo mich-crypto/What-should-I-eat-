@@ -21,6 +21,28 @@ Then open `http://localhost:8080` in a browser (or on your phone via your
 computer's LAN IP, e.g. `http://192.168.1.23:8080`, for the full iOS
 install experience).
 
+## Deploy to Cloudflare Pages
+
+This is a pure static site, so no build step is needed.
+
+**Via the dashboard (connect the GitHub repo):**
+1. Cloudflare dashboard → **Workers & Pages** → **Create** → **Pages** →
+   **Connect to Git** → pick this repo/branch.
+2. Build settings: **Framework preset** `None`, **Build command** left
+   empty, **Build output directory** `/` (the repo root).
+3. Deploy. Cloudflare picks up `_headers` automatically (sets the correct
+   `Content-Type` for `manifest.webmanifest` and stops `sw.js` from being
+   cached stale).
+
+**Via Wrangler CLI, without connecting Git:**
+```
+npx wrangler pages deploy . --project-name what-should-i-eat
+```
+
+Once it's live at your `*.pages.dev` URL (or a custom domain attached in
+Pages → Custom domains), the "Add to Home Screen" flow below works exactly
+the same as running it locally.
+
 ## Install on iPhone (Add to Home Screen)
 
 1. Open the app's URL in **Safari** on the iPhone (must be Safari, not

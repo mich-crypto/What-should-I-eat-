@@ -1,0 +1,21 @@
+# Cloudflare Pages custom headers.
+# https://developers.cloudflare.com/pages/configuration/headers/
+
+# The manifest needs the right MIME type for browsers/iOS to recognize it.
+/manifest.webmanifest
+  Content-Type: application/manifest+json
+  Cache-Control: public, max-age=86400
+
+# Never let the service worker itself go stale in a CDN/browser cache —
+# otherwise updates to the app shell can take a long time to reach users.
+/sw.js
+  Cache-Control: no-cache
+
+# Static assets can be cached aggressively; filenames don't change on
+# redeploy so a long max-age is safe.
+/icons/*
+  Cache-Control: public, max-age=31536000, immutable
+/css/*
+  Cache-Control: public, max-age=3600
+/js/*
+  Cache-Control: public, max-age=3600
