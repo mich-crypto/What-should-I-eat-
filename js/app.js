@@ -21,7 +21,21 @@ let state = {
   shoppingChecked: {},
 };
 
-if (!state.plan) {
+/**
+ * A saved plan can reference a recipe that no longer resolves — most
+ * commonly an AI-sourced recipe, whose id only ever lived in the in-memory
+ * RECIPES array for that one session and was never actually persisted.
+ * Rendering such a plan would otherwise throw partway through and leave
+ * the Plan tab blank, so validate on load and silently regenerate if
+ * anything doesn't check out.
+ */
+function planIsValid(plan) {
+  if (!plan || !Array.isArray(plan.days) || plan.days.length === 0) return false;
+  return plan.days.every((day) => MEAL_ORDER_FOR_VALIDATION.every((m) => day[m] && recipeById(day[m].recipeId)));
+}
+const MEAL_ORDER_FOR_VALIDATION = ["breakfast", "lunch", "dinner"];
+
+if (!planIsValid(state.plan)) {
   state.plan = generatePlan(state);
   Store.setPlan(state.plan);
 }
@@ -260,10 +274,20 @@ function renderPlan() {
   const targets = computeTargets(state.settings);
   const today = new Date();
 
+  let repaired = false;
   const html = state.plan.days
     .map((day, i) => {
       const date = new Date(day.date);
       const isToday = date.toDateString() === today.toDateString();
+      // A slot's recipe can vanish (e.g. an AI-sourced id from a session
+      // that's since ended) — repair it on the fly instead of crashing
+      // the whole tab on a missing .title/.nutrition lookup below.
+      MEAL_ORDER.forEach((m) => {
+        if (!recipeById(day[m]?.recipeId)) {
+          regenerateSlot(state.plan, i, m, state);
+          repaired = true;
+        }
+      });
       const recipes = MEAL_ORDER.map((m) => recipeById(day[m].recipeId));
       const totals = sumNutrition(recipes);
 
@@ -283,6 +307,8 @@ function renderPlan() {
         </div>`;
     })
     .join("");
+
+  if (repaired) Store.setPlan(state.plan);
 
   view.innerHTML = `<h2 class="section-title">${state.settings.planDays}-day plan · ${state.settings.persons} ${state.settings.persons === 1 ? "person" : "people"}</h2>${html}`;
 
