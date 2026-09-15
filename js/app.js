@@ -158,11 +158,19 @@ function minutesLabel(recipe) {
   return `${isEstimate(recipe) ? "~" : ""}${recipe.minutes} min`;
 }
 
-// A `function` declaration, not `const` — this is called from module
-// top-level code (to hydrate the cache) before this line would otherwise
-// have run, and function declarations (unlike const) are fully hoisted.
+// `function` declarations, not `const` — these are called from module
+// top-level code (to hydrate the cache) before a `const` line would
+// otherwise have run, and function declarations (unlike const) are fully
+// hoisted.
 function isWebSourced(r) {
   return r.id.startsWith("ai-") || r.id.startsWith("mealdb-");
+}
+function normalizeTitle(t) {
+  return t.trim().toLowerCase();
+}
+/** "ai" or "mealdb" — used to scope a title-collision check to the same source. */
+function sourceOf(r) {
+  return r.id.split("-")[0];
 }
 
 /** Add fetched recipes to the in-memory catalog (skipping ones already there) and persist any web-sourced ones so future plans can reuse them without a network round-trip. */
@@ -175,16 +183,35 @@ function registerSessionRecipes(recipes) {
   if (cacheable.length === 0) return;
   const cache = Store.getWebRecipeCache();
   const byId = new Map(cache.map((r) => [r.id, r]));
-  cacheable.forEach((r) => byId.set(r.id, { ...r, cachedAt: Date.now() }));
+  // Also index by source+meal+title: Gemini in particular can hand back
+  // the same real dish under a fresh random id on separate calls. Without
+  // this, the cache would keep piling up parallel entries for the exact
+  // same dish, quietly crowding out real variety until a plan built from
+  // "distinct ids" was actually the same handful of dishes repeated.
+  const byTitleKey = new Map();
+  for (const r of byId.values()) byTitleKey.set(`${sourceOf(r)}|${r.meal}|${normalizeTitle(r.title)}`, r.id);
+  cacheable.forEach((r) => {
+    const key = `${sourceOf(r)}|${r.meal}|${normalizeTitle(r.title)}`;
+    const existingId = byTitleKey.get(key);
+    if (existingId && existingId !== r.id) byId.delete(existingId); // replace, don't duplicate
+    byId.set(r.id, { ...r, cachedAt: Date.now() });
+    byTitleKey.set(key, r.id);
+  });
   let merged = Array.from(byId.values()).sort((a, b) => (b.cachedAt || 0) - (a.cachedAt || 0));
   const CACHE_CAP = 300;
   if (merged.length > CACHE_CAP) merged = merged.slice(0, CACHE_CAP);
   Store.setWebRecipeCache(merged);
 }
 
-/** Cached web-sourced recipes usable right now for a meal slot (matches diet, roughly fits the cook-time limit). */
+/**
+ * Cached web-sourced recipes usable right now for a meal slot (matches
+ * diet, roughly fits the cook-time limit) — deduped by title, not just id.
+ * The same real dish can end up cached under more than one id (a fresh
+ * random id from Gemini each time it's suggested), and without this, "N
+ * distinct ids" could still mean the same handful of dishes over and over.
+ */
 function cachedCandidates(meal, sourcePrefix) {
-  return RECIPES.filter(
+  const matches = RECIPES.filter(
     (r) =>
       r.id.startsWith(sourcePrefix) &&
       r.meal === meal &&
@@ -192,6 +219,12 @@ function cachedCandidates(meal, sourcePrefix) {
       r.minutes <= state.settings.cookTime[meal] + 15 &&
       state.prefs[r.id] !== -1
   );
+  const byTitle = new Map();
+  for (const r of matches) {
+    const key = normalizeTitle(r.title);
+    if (!byTitle.has(key)) byTitle.set(key, r);
+  }
+  return Array.from(byTitle.values());
 }
 
 /** True if the cache alone has enough distinct recipes per meal to fill a plan with zero forced repeats. */
@@ -221,8 +254,6 @@ function buildPlanFromCache(days, sourcePrefix, source) {
   }
   return { days: planDays, generatedAt: new Date().toISOString(), source };
 }
-
-const normalizeTitle = (t) => t.trim().toLowerCase();
 
 /**
  * Bulk plan generation is one big JSON response, and LLMs are prone to
@@ -361,7 +392,16 @@ async function rerollSlot(dayIndex, meal) {
 
   const sourcePrefix = source === "mealdb" ? "mealdb-" : source === "gemini" ? "ai-" : null;
   if (sourcePrefix) {
-    const cached = cachedCandidates(meal, sourcePrefix).filter((r) => !currentIds.has(r.id));
+    // Exclude by title, not just id — the same real dish can be cached
+    // under more than one id (Gemini gives it a fresh random one each
+    // time), so an id-only check could "swap in" a dish already elsewhere
+    // in this exact plan.
+    const usedTitlesThisMeal = new Set(
+      state.plan.days.map((d) => recipeById(d[meal]?.recipeId)).filter(Boolean).map((r) => normalizeTitle(r.title))
+    );
+    const cached = cachedCandidates(meal, sourcePrefix).filter(
+      (r) => !currentIds.has(r.id) && !usedTitlesThisMeal.has(normalizeTitle(r.title))
+    );
     if (cached.length > 0) {
       const recipe = cached[Math.floor(Math.random() * cached.length)];
       state.plan.days[dayIndex][meal] = { recipeId: recipe.id, locked: false };

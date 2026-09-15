@@ -123,6 +123,24 @@ UI, dietary filtering — doesn't know or care which source a recipe came
 from. Swapping in another dedicated recipe API (Spoonacular, Edamam, etc.)
 instead of/alongside these is a matter of matching that same shape.
 
+### Variety across the plan
+
+Every path that fills a plan tracks which recipe it already placed for
+each meal type earlier in that same plan and excludes it from the next
+day's pick — the built-in planner, the Gemini bulk-generation dedup pass,
+TheMealDB's per-slot fetching, and the recipe cache all do this
+independently, so it holds regardless of which source is active or how
+many of them a single "Regenerate plan" ends up touching (e.g. cache for
+most slots, a live fetch to top up the rest). It degrades gracefully
+rather than failing outright: once every non-excluded option (matching
+cook-time/season/preference, then just diet, then the whole catalog for
+that meal) is exhausted — realistically only on a very long plan against
+a small catalog — a repeat is allowed rather than showing nothing.
+Matching is done by dish title, not by id, since the same real dish can
+end up cached under more than one id (Gemini hands it a fresh random id
+each time it's suggested) — an id-only check would still let the same
+dish appear twice under two different ids.
+
 ## Caching web recipes (so regenerating a plan is fast)
 
 A whole plan from Gemini is one big generation request — noticeably slower

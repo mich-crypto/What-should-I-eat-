@@ -109,6 +109,17 @@ export function generatePlan({ settings, prefs, history }) {
 
   const days = [];
   const startDate = new Date();
+  // Recipes already placed in *this* generation, per meal type — without
+  // this, nothing stops the same recipe winning every single day. Recency
+  // scoring alone doesn't catch it (that only looks at past sessions, not
+  // choices made earlier in this same loop), and "maximize efficiency"
+  // actively makes it worse: once a recipe is picked, its own ingredients
+  // are already in the pool, so it scores a perfect self-overlap match and
+  // keeps winning again. pickRecipe()'s fallback ladder still allows a
+  // repeat once every non-excluded option (cook-time/season/preference,
+  // then diet, then finally the whole catalog for that meal) is exhausted,
+  // so a small catalog degrades to repeats gracefully instead of crashing.
+  const usedByMeal = { breakfast: new Set(), lunch: new Set(), dinner: new Set() };
 
   for (let d = 0; d < settings.planDays; d++) {
     const date = new Date(startDate);
@@ -116,7 +127,8 @@ export function generatePlan({ settings, prefs, history }) {
     const dayPlan = { date: date.toISOString().slice(0, 10) };
 
     for (const meal of MEALS) {
-      const recipe = pickRecipe(meal, ctx);
+      const recipe = pickRecipe(meal, ctx, usedByMeal[meal]);
+      usedByMeal[meal].add(recipe.id);
       dayPlan[meal] = { recipeId: recipe.id, locked: false };
       recipe.ingredients.forEach((ing) => ctx.ingredientPool.add(ing.name));
     }
@@ -130,17 +142,21 @@ export function generatePlan({ settings, prefs, history }) {
 export function regenerateSlot(plan, dayIndex, meal, { settings, prefs, history }) {
   const season = currentSeason();
   const ingredientPool = new Set();
-  plan.days.forEach((day) => {
+  const usedElsewhereThisMeal = new Set();
+  plan.days.forEach((day, i) => {
     MEALS.forEach((m) => {
       if (day[m]) {
         const r = RECIPES.find((r) => r.id === day[m].recipeId);
         if (r) r.ingredients.forEach((ing) => ingredientPool.add(ing.name));
+        if (m === meal && i !== dayIndex) usedElsewhereThisMeal.add(day[m].recipeId);
       }
     });
   });
 
   const currentId = plan.days[dayIndex][meal].recipeId;
-  const exclude = new Set([currentId]);
+  // Exclude the slot's current recipe *and* every other day's <meal>, so a
+  // reroll can't hand back a dish already scheduled elsewhere in the plan.
+  const exclude = new Set([currentId, ...usedElsewhereThisMeal]);
   const ctx = {
     prefs,
     history,
