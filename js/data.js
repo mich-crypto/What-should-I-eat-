@@ -28,24 +28,40 @@ const img = (id) => `https://images.unsplash.com/${id}?w=900&q=70&auto=format&fi
 // This is still an approximation: for a photo that actually matches the
 // specific dish, switch "Recipe source" to TheMealDB or Gemini in Settings
 // — both return the real photo for the exact recipe, not a placeholder.
+// Order matters — the first match wins, so the more specific dish types
+// (fish, soup) sit above the broad ones (bowl, salad).
+//
+// Every pattern here must be one a human would agree with looking at the
+// card. If a dish doesn't clearly belong to one of these buckets it gets
+// NO photo rather than an arbitrary one: a picture of pasta next to
+// "Chicken Tikka Masala" isn't a cosmetic flaw, it tells you you're
+// cooking the wrong thing. The UI renders a deliberate placeholder in
+// that case. For a real photo of the actual dish, use Spoonacular or
+// TheMealDB as the recipe source — a fixed handful of stock photos can
+// never cover a catalogue of this size.
 const PHOTO_BUCKETS = [
   { match: /oat|granola|muesli|porridge|chia|smoothie/i, photo: "photo-1490645935967-10de6ba17061" },
-  { match: /toast|sandwich|bagel|avocado|banh mi|blt/i, photo: "photo-1512058564366-18510be2db19" },
-  { match: /egg|omelette|shakshuka|frittata|huevos/i, photo: "photo-1476718406336-bb5a9690ee2a" },
   { match: /pancake|waffle|french toast/i, photo: "photo-1512621776951-a57141f2eefd" },
-  { match: /salad|tabbouleh|caprese(?!.*pasta)/i, photo: "photo-1525351484163-7529414344d8" },
-  { match: /pasta|spaghetti|lasagna|pizza|bolognese|mac/i, photo: "photo-1467003909585-2f8a72700288" },
-  { match: /curry|masala|tikka|katsu|coconut/i, photo: "photo-1546069901-ba9599a7e63c" },
-  { match: /bowl|quinoa|grain|couscous|falafel|chickpea/i, photo: "photo-1547592166-23ac45744acd" },
-  { match: /salmon|fish|shrimp|scampi|poke|taco/i, photo: "photo-1504674900247-0877df9cc836" },
-  { match: /steak|beef|chili|pork|lamb/i, photo: "photo-1555939594-58d7cb561ad1" },
+  // \beggs?\b so "Eggplant" doesn't match "egg" — the same substring trap
+  // that once filed "Goat Meat" under grains.
+  { match: /\beggs?\b|omelette|shakshuka|frittata|huevos/i, photo: "photo-1476718406336-bb5a9690ee2a" },
+  { match: /toast|sandwich|bagel|banh mi|blt|avocado/i, photo: "photo-1512058564366-18510be2db19" },
   { match: /soup|stew|minestrone|chowder/i, photo: "photo-1540189549336-e6e99c3679fe" },
+  // "taco" deliberately isn't here: Baja Fish Tacos matches on "fish",
+  // while Breakfast Tacos (chorizo and egg) would have been given a
+  // seafood photo.
+  { match: /salmon|fish|shrimp|scampi|poke/i, photo: "photo-1504674900247-0877df9cc836" },
+  { match: /curry|masala|tikka|katsu|coconut/i, photo: "photo-1546069901-ba9599a7e63c" },
+  { match: /steak|beef|chili|pork|lamb/i, photo: "photo-1555939594-58d7cb561ad1" },
+  // "pizza" removed — the photo here is pasta, and a pizza deserves
+  // either a pizza photo or none.
+  { match: /pasta|spaghetti|lasagna|bolognese|\bmac\b/i, photo: "photo-1467003909585-2f8a72700288" },
+  { match: /salad|tabbouleh|caprese/i, photo: "photo-1525351484163-7529414344d8" },
+  { match: /quinoa|grain bowl|couscous|falafel|chickpea/i, photo: "photo-1547592166-23ac45744acd" },
 ];
-let photoCursor = 0;
 function photoFor(title) {
   const bucket = PHOTO_BUCKETS.find((b) => b.match.test(title));
-  if (bucket) return img(bucket.photo);
-  return img(PHOTO_BUCKETS[photoCursor++ % PHOTO_BUCKETS.length].photo);
+  return bucket ? img(bucket.photo) : null; // null => the UI shows a placeholder
 }
 
 // ---------------------------------------------------------------- Diet flags

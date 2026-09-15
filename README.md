@@ -114,10 +114,14 @@ that matters for speed.
   ingredients don't include).
 - **Built-in catalog** (`js/data.js`, ~65 recipes) — fully offline, and
   what every recipe source falls back to if a live call fails for any
-  reason (no network, rate limit, bad response). Photos here are matched
-  to the dish by keyword (curry → a curry photo, salad → a salad photo,
-  etc.) rather than being the specific dish's real photo, since there
-  aren't 65 unique stock photos to give each recipe its own.
+  reason (no network, rate limit, bad response). It shares a small set of
+  stock photos, keyword-matched to the dish type (curry → a curry photo,
+  salad → a salad photo). Where a dish doesn't clearly fit one of those
+  buckets it gets **no photo and a deliberate placeholder instead of an
+  arbitrary one** — a picture of pasta next to a curry isn't a cosmetic
+  flaw, it tells you you're cooking the wrong thing. 52 of the 66 have a
+  defensible photo; the other 14 show the placeholder. For a real photo of
+  the actual dish, use Spoonacular or TheMealDB.
 - **Gemini, grounded in Google Search** (`js/ai.js`) — needs a free API key
   (aistudio.google.com). Asks Gemini 2.5 Flash, with Google Search
   grounding enabled, to find real recipes online matching your cook-time

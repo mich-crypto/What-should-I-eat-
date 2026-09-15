@@ -416,6 +416,22 @@ h2.section-title:first-child { margin-top: 4px; }
 .modal-actions button svg { width: 16px; height: 16px; fill: currentColor; }
 .modal-actions button.liked { color: var(--accent); border-color: var(--accent); }
 
+/* ---------- "No photo for this dish" placeholder ---------- */
+/* Reads as an intentional mark rather than a failed image load. */
+.photo-placeholder {
+  display: flex; align-items: center; justify-content: center;
+  background:
+    repeating-linear-gradient(45deg,
+      color-mix(in srgb, var(--accent) 9%, var(--surface)) 0 8px,
+      color-mix(in srgb, var(--accent) 14%, var(--surface)) 8px 16px);
+  color: color-mix(in srgb, var(--accent) 55%, var(--text-dim));
+}
+.photo-placeholder svg { width: 42%; max-width: 54px; height: auto; fill: currentColor; opacity: 0.65; }
+.photo-placeholder.fill { position: absolute; inset: 0; }
+/* When it stands in for a meal-row thumbnail it must keep that footprint. */
+.meal-thumb.photo-placeholder { width: 54px; height: 54px; border-radius: 12px; flex-shrink: 0; }
+.meal-thumb.photo-placeholder svg { width: 24px; }
+
 /* ---------- Loading overlay (cooking-pot animation) ---------- */
 .loading-overlay {
   position: fixed; inset: 0;

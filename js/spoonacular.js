@@ -42,6 +42,12 @@ function categoryForAisle(aisle, name, categorizeIngredient) {
   return categorizeIngredient(name); // fall back to our own keyword heuristic
 }
 
+function absoluteImage(image, id) {
+  if (!image) return null;
+  if (/^https?:\/\//i.test(image)) return image;
+  return `https://img.spoonacular.com/recipes/${image.includes("-") ? image : `${id}-556x370.jpg`}`;
+}
+
 function nutrientAmount(nutrition, wanted, fallback) {
   const list = nutrition?.nutrients || [];
   const hit = list.find((n) => (n.name || "").toLowerCase() === wanted);
@@ -75,7 +81,11 @@ function toRecipe(raw, meal, categorizeIngredient) {
     season: ["all"],
     minutes: raw.readyInMinutes || 30,
     tags: (raw.dishTypes || []).slice(0, 3),
-    image: raw.image || null, // a real photo of this exact dish
+    // A real photo of this exact dish. complexSearch returns a full URL,
+    // but some Spoonacular endpoints return a bare filename — if that ever
+    // leaks through, an <img src="pasta-123.jpg"> would resolve against our
+    // own origin and 404, so normalise it to an absolute URL here.
+    image: absoluteImage(raw.image, raw.id),
     // complexSearch returns nutrition totals for the whole recipe; the rest
     // of the app works per serving.
     nutrition: {

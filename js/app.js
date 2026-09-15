@@ -113,6 +113,7 @@ function openRecipeModal(recipe) {
 
   modalSheet.innerHTML = `
     <div class="modal-photo" style="${photo}">
+      ${recipe.image ? "" : placeholderMark("fill")}
       <button class="modal-close" id="modal-close-btn" aria-label="Close">
         <svg viewBox="0 0 24 24"><path d="M18.3 5.71a1 1 0 0 0-1.41 0L12 10.59 7.11 5.7A1 1 0 0 0 5.7 7.11L10.59 12 5.7 16.89a1 1 0 1 0 1.41 1.41L12 13.41l4.89 4.89a1 1 0 0 0 1.41-1.41L13.41 12l4.89-4.89a1 1 0 0 0 0-1.4z"/></svg>
       </button>
@@ -162,6 +163,21 @@ function likedAndDislikedTitles() {
     likedTitles: RECIPES.filter((r) => state.prefs[r.id] === 1).map((r) => r.title),
     dislikedTitles: RECIPES.filter((r) => state.prefs[r.id] === -1).map((r) => r.title),
   };
+}
+
+
+/**
+ * Placeholder for recipes we have no genuine photo of.
+ *
+ * Deliberately a designed mark, not a broken image: the built-in catalogue
+ * shares a small set of stock photos, and rather than put a picture of
+ * pasta next to a curry we show nothing and say so. Web-sourced recipes
+ * (Spoonacular/TheMealDB) carry the real photo of the actual dish.
+ */
+function placeholderMark(extraClass = "") {
+  return `<div class="photo-placeholder ${extraClass}" role="img" aria-label="No photo for this recipe">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 2v9a3 3 0 0 1-2 2.83V22H7v-8.17A3 3 0 0 1 5 11V2h1.5v8h1V2H9v8h1V2h1zm6.5 0c1.93 0 3.5 2.46 3.5 5.5 0 2.7-1.24 4.94-2.87 5.41V22h-2V2h1.37z"/></svg>
+  </div>`;
 }
 
 /** True estimated minutes badge for MealDB recipes, which don't carry a real cook time. */
@@ -652,7 +668,7 @@ function mealRowHtml(day, dayIndex, meal, recipe) {
   const liked = state.prefs[recipe.id] === 1;
   const img = recipe.image
     ? `<img class="meal-thumb" src="${recipe.image}" alt="" onerror="this.style.background='linear-gradient(135deg,var(--accent),var(--accent-2))'; this.removeAttribute('src')">`
-    : `<div class="meal-thumb"></div>`;
+    : placeholderMark("meal-thumb");
   return `
     <div class="meal-row" data-day="${dayIndex}" data-meal="${meal}" data-recipe="${recipe.id}">
       ${img}
@@ -825,6 +841,7 @@ function drawStack(pool) {
       card.style.zIndex = isTop ? 2 : 1;
       card.innerHTML = `
         <div class="photo" style="${recipe.image ? `background-image:url('${recipe.image}')` : ""}">
+          ${recipe.image ? "" : placeholderMark("fill")}
           <span class="badge">${minutesLabel(recipe)}</span>
           <span class="stamp like">Yum</span>
           <span class="stamp nope">Skip</span>
