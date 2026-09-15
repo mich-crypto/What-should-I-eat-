@@ -60,7 +60,9 @@ body {
   top: 0;
   z-index: 5;
 }
+.topbar-titles { display: flex; flex-direction: column; gap: 1px; }
 .topbar-title { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+.topbar-version { font-size: 11px; color: var(--text-dim); }
 .icon-btn {
   border: 1px solid var(--line);
   background: var(--surface);

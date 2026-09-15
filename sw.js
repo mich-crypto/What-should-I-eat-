@@ -11,7 +11,7 @@
 // page's controllerchange listener (in index.html) reloads it once, so a
 // push reaches anyone with the app already open without them doing
 // anything.
-const CACHE_VERSION = "1.4.2";
+const CACHE_VERSION = "1.5.0";
 const CACHE = `wsie-shell-v${CACHE_VERSION}`;
 const SHELL = [
   "./",
@@ -43,22 +43,23 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+// Network-first, not cache-first: as long as there's a connection, always
+// serve the live file and refresh the cache from it, so a deploy reaches
+// this device the very next load — no waiting on the service-worker
+// update lifecycle to notice a change first. The cache exists purely as
+// an offline fallback (used only when the network request itself fails).
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
   if (url.origin !== location.origin) return; // let recipe photos / API calls pass through
 
   event.respondWith(
-    caches.match(event.request).then(
-      (cached) =>
-        cached ||
-        fetch(event.request)
-          .then((res) => {
-            const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(event.request, copy));
-            return res;
-          })
-          .catch(() => caches.match("./index.html"))
-    )
+    fetch(event.request)
+      .then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(event.request, copy));
+        return res;
+      })
+      .catch(() => caches.match(event.request).then((cached) => cached || caches.match("./index.html")))
   );
 });

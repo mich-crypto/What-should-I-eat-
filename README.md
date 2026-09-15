@@ -108,7 +108,12 @@ Pick one in Settings → Recipe source:
   dishes. No photo is available for these (Gemini doesn't return one), so
   the UI shows a plain color block instead. Search grounding is a metered
   feature on Gemini's API; check current pricing/quotas if you plan to
-  regenerate plans often.
+  regenerate plans often. A whole plan is generated in one request, and
+  long bulk generations are where LLMs are most prone to repeating a
+  pattern — the prompt tells Gemini every breakfast/lunch/dinner title
+  must be distinct, and that's checked afterward too: any repeat gets
+  replaced with a single targeted re-ask before the plan is shown, so a
+  duplicated dish never actually reaches the app.
 
 All three return the exact same recipe shape (title, ingredients, steps,
 nutrition, tags), so the rest of the app — planner, shopping list, swipe
@@ -152,16 +157,25 @@ icons/               Generated app icons (apple-touch-icon + PWA icons)
 
 ## Versioning & auto-update
 
-The version shown at the bottom of the Settings tab comes from
-`js/version.js`. **Bump `VERSION` there and `CACHE_VERSION` at the top of
-`sw.js` together on every deploy** — same value in both places. That's what
-makes an update "count": a new cache name means the service worker's
-`activate` step drops the old cached app shell and fetches the new one.
+The version shows in two places: under the page title in the top bar (every
+tab — a quick way to confirm what build a device is actually running,
+without digging into Settings) and again at the bottom of the Settings tab.
+Both come from `js/version.js`.
 
-Nothing further to run — a phone with the app already open (or added to
-the Home Screen) picks the update up on its own:
-1. The page checks for a new `sw.js` whenever it regains focus, and hourly
-   while left open.
-2. If the version changed, the new service worker installs, takes over
-   immediately (`skipWaiting` + `clients.claim()`), and the page reloads
-   itself once to pick up the new files — no manual refresh needed.
+**Bump `VERSION` there and `CACHE_VERSION` at the top of `sw.js` together on
+every deploy** — same value in both places.
+
+The service worker's cache is **network-first**: whenever there's a
+connection, it always fetches the live file and refreshes the cache from
+it — the cache is purely an offline fallback, used only if the network
+request itself fails. That means a deploy reaches a device on its very
+next load, without depending on the browser's own service-worker-update
+lifecycle (which only checks periodically and can leave a stale cached
+copy in place for a while). The `CACHE_VERSION` bump still matters — it's
+what makes the `activate` step drop old offline-fallback caches — but it's
+no longer the only thing standing between a deploy and a device seeing it.
+
+On top of that, a page already open picks up a genuinely new service
+worker on its own: it checks for one whenever it regains focus and hourly
+while left open, and reloads itself once when a new one takes over
+(`skipWaiting` + `clients.claim()`) — no manual refresh needed either way.

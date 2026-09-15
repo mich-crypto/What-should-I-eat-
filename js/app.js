@@ -9,7 +9,13 @@ import { VERSION, BUILD_DATE } from "./version.js";
 
 const view = document.getElementById("view");
 const topbarTitle = document.getElementById("topbar-title");
+const topbarVersion = document.getElementById("topbar-version");
 const toastEl = document.getElementById("toast");
+
+// Shown on every tab (not just Settings) so it's a quick, no-navigation way
+// to confirm which build a device is actually running — handy when
+// troubleshooting a stale cache.
+topbarVersion.textContent = `v${VERSION}`;
 const loadingOverlay = document.getElementById("loading-overlay");
 const loadingTextEl = document.getElementById("loading-text");
 
@@ -151,6 +157,47 @@ function registerSessionRecipes(recipes) {
   recipes.forEach((r) => RECIPES.push(r)); // session-only, so recipeById() keeps working uniformly
 }
 
+const normalizeTitle = (t) => t.trim().toLowerCase();
+
+/**
+ * Bulk plan generation is one big JSON response, and LLMs are prone to
+ * repeating a pattern across a long generation — the prompt asks Gemini for
+ * distinct titles, but that's not a guarantee, so verify it here and fix any
+ * repeat with a single-slot re-ask (excluding every title already used for
+ * that meal type) instead of trusting the prompt alone. Mutates `aiDays` in
+ * place; up to 2 retries per duplicate slot before giving up on that one.
+ */
+async function deduplicateAiPlan(aiDays, dislikedTitles) {
+  const seenByMeal = { breakfast: new Set(), lunch: new Set(), dinner: new Set() };
+
+  for (const day of aiDays) {
+    for (const meal of MEAL_ORDER) {
+      const seen = seenByMeal[meal];
+      let recipe = day[meal];
+      let attempts = 0;
+      while (seen.has(normalizeTitle(recipe.title)) && attempts < 2) {
+        attempts++;
+        try {
+          recipe = await suggestRecipeWithAI({
+            apiKey: state.settings.geminiKey,
+            meal,
+            minutesLimit: state.settings.cookTime[meal],
+            seasonal: state.settings.seasonal,
+            season: currentSeason(),
+            dislikedTitles: [...dislikedTitles, ...seen],
+            diet: state.settings.diet,
+          });
+        } catch (err) {
+          console.error(err);
+          break; // keep the duplicate rather than fail the whole plan over one slot
+        }
+      }
+      day[meal] = recipe;
+      seen.add(normalizeTitle(recipe.title));
+    }
+  }
+}
+
 /**
  * Build a full plan from whichever "Recipe source" is selected in Settings
  * (built-in catalog / TheMealDB / Gemini). Any failure — no network, no
@@ -204,6 +251,7 @@ async function buildNewPlan() {
         dislikedTitles,
         diet: state.settings.diet,
       });
+      await deduplicateAiPlan(aiDays, dislikedTitles);
       const startDate = new Date();
       const days = aiDays.map((day, i) => {
         const date = new Date(startDate);
@@ -260,13 +308,19 @@ async function rerollSlot(dayIndex, meal) {
     showLoading("Asking Gemini for another option…");
     try {
       const { dislikedTitles } = likedAndDislikedTitles();
+      // Also steer away from every other <meal> already elsewhere in this
+      // plan, so a single reroll can't hand back a dish already scheduled.
+      const usedTitlesThisMeal = state.plan.days
+        .map((d) => recipeById(d[meal]?.recipeId))
+        .filter(Boolean)
+        .map((r) => r.title);
       const recipe = await suggestRecipeWithAI({
         apiKey: state.settings.geminiKey,
         meal,
         minutesLimit: state.settings.cookTime[meal],
         seasonal: state.settings.seasonal,
         season: currentSeason(),
-        dislikedTitles,
+        dislikedTitles: [...dislikedTitles, ...usedTitlesThisMeal],
         diet: state.settings.diet,
       });
       registerSessionRecipes([recipe]);

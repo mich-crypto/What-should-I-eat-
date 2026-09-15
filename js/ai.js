@@ -113,7 +113,8 @@ Constraints:
 ${seasonal ? `- Favor recipes built around ingredients in season during ${season} in a temperate climate.` : ""}
 ${dietLine(diet)}- The person likes: ${likedTitles.join(", ") || "no strong preferences yet"} — lean toward similar dishes/cuisines where sensible.
 - Avoid anything like: ${dislikedTitles.join(", ") || "none"}.
-- Vary the recipes across the plan (don't repeat the same dish on multiple days) and prefer some ingredient overlap between recipes in the same week, to keep the shopping list efficient.
+- HARD REQUIREMENT: every single breakfast title must be different from every other breakfast in the plan — same for lunches, and same for dinners. Do not reuse a title anywhere in the plan, even on non-adjacent days. Pick ${days} genuinely distinct breakfast recipes, ${days} distinct lunches, and ${days} distinct dinners.
+- Within that constraint, prefer some ingredient overlap between different recipes in the same week (e.g. two different dinners that both use chicken thighs), to keep the shopping list efficient — variety of dishes, not variety of every single ingredient.
 Respond with ONLY minified JSON, no markdown fences, no commentary, in exactly this shape (an array of ${days} day objects):
 {"days":[{"breakfast":${RECIPE_SCHEMA},"lunch":${RECIPE_SCHEMA},"dinner":${RECIPE_SCHEMA}}]}`;
 
