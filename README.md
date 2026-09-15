@@ -83,7 +83,9 @@ the same as running it locally.
 
 ## Where recipes come from
 
-Pick one in Settings → Recipe source:
+Pick one in Settings → Recipe source. Whichever you pick, every recipe it
+fetches (Gemini and TheMealDB both) is cached on-device — see **Caching web
+recipes** below for why that matters for speed.
 
 - **TheMealDB** (`js/mealdb.js`) — **the default.** A free, keyless public
   recipe API (themealdb.com). "Regenerate plan" / "Try another" fetch a
@@ -121,6 +123,28 @@ UI, dietary filtering — doesn't know or care which source a recipe came
 from. Swapping in another dedicated recipe API (Spoonacular, Edamam, etc.)
 instead of/alongside these is a matter of matching that same shape.
 
+## Caching web recipes (so regenerating a plan is fast)
+
+A whole plan from Gemini is one big generation request — noticeably slower
+than picking from a local list — and TheMealDB needs one network round-trip
+per meal slot. Neither is instant, so every recipe either source returns
+gets saved on-device (`js/storage.js`'s `webRecipeCache`, capped at 300,
+oldest trimmed first) and restored on every app load.
+
+"Regenerate plan" and "Try another" check that cache first: if it already
+has enough distinct matching recipes to fill the request (same meal type,
+still satisfies your current dietary settings and cook-time limit) with
+zero forced repeats, the plan builds from the cache instantly — no network
+call at all. It only falls back to actually fetching from Gemini/TheMealDB
+when the cache can't cover the request, e.g. the first time you use a
+source, or right after turning on a dietary restriction the cache doesn't
+have enough matches for yet.
+
+Settings shows how many recipes are cached, with a **Clear** button if
+you'd rather force fresh results next time than keep reusing what's been
+fetched before — clearing takes effect immediately, not just after a
+reload.
+
 ## Dietary needs (vegetarian / vegan / gluten-free)
 
 Turned on in Settings, these are treated as hard requirements, not soft
@@ -144,7 +168,7 @@ manifest.webmanifest PWA manifest (Home Screen icon/name/colors)
 sw.js                Offline app-shell cache
 css/styles.css       All styling (light + dark, iOS-safe-area aware)
 js/data.js           Sample recipe catalog
-js/storage.js        localStorage wrapper (settings/plan/prefs/history)
+js/storage.js        localStorage wrapper (settings/plan/prefs/history/web recipe cache)
 js/nutrition.js      BMR/TDEE + macro targets
 js/planner.js        Weekly plan generation & single-slot regeneration
 js/shopping.js       Ingredient aggregation into a shopping list

@@ -38,6 +38,11 @@ let state = {
   shoppingChecked: {},
 };
 
+// Recipes already fetched from Gemini/TheMealDB in a previous session,
+// restored so a saved plan referencing one still resolves, and so
+// regenerating a plan can reuse them instantly instead of re-fetching.
+registerSessionRecipes(Store.getWebRecipeCache());
+
 /**
  * A saved plan can reference a recipe that no longer resolves — most
  * commonly an AI-sourced recipe, whose id only ever lived in the in-memory
@@ -153,8 +158,68 @@ function minutesLabel(recipe) {
   return `${isEstimate(recipe) ? "~" : ""}${recipe.minutes} min`;
 }
 
+// A `function` declaration, not `const` — this is called from module
+// top-level code (to hydrate the cache) before this line would otherwise
+// have run, and function declarations (unlike const) are fully hoisted.
+function isWebSourced(r) {
+  return r.id.startsWith("ai-") || r.id.startsWith("mealdb-");
+}
+
+/** Add fetched recipes to the in-memory catalog (skipping ones already there) and persist any web-sourced ones so future plans can reuse them without a network round-trip. */
 function registerSessionRecipes(recipes) {
-  recipes.forEach((r) => RECIPES.push(r)); // session-only, so recipeById() keeps working uniformly
+  const known = new Set(RECIPES.map((r) => r.id));
+  const fresh = recipes.filter((r) => !known.has(r.id));
+  fresh.forEach((r) => RECIPES.push(r));
+
+  const cacheable = fresh.filter(isWebSourced);
+  if (cacheable.length === 0) return;
+  const cache = Store.getWebRecipeCache();
+  const byId = new Map(cache.map((r) => [r.id, r]));
+  cacheable.forEach((r) => byId.set(r.id, { ...r, cachedAt: Date.now() }));
+  let merged = Array.from(byId.values()).sort((a, b) => (b.cachedAt || 0) - (a.cachedAt || 0));
+  const CACHE_CAP = 300;
+  if (merged.length > CACHE_CAP) merged = merged.slice(0, CACHE_CAP);
+  Store.setWebRecipeCache(merged);
+}
+
+/** Cached web-sourced recipes usable right now for a meal slot (matches diet, roughly fits the cook-time limit). */
+function cachedCandidates(meal, sourcePrefix) {
+  return RECIPES.filter(
+    (r) =>
+      r.id.startsWith(sourcePrefix) &&
+      r.meal === meal &&
+      matchesDiet(r, state.settings.diet) &&
+      r.minutes <= state.settings.cookTime[meal] + 15 &&
+      state.prefs[r.id] !== -1
+  );
+}
+
+/** True if the cache alone has enough distinct recipes per meal to fill a plan with zero forced repeats. */
+function canBuildPlanFromCache(days, sourcePrefix) {
+  return MEAL_ORDER.every((meal) => cachedCandidates(meal, sourcePrefix).length >= days);
+}
+
+/** Build a full plan from cached recipes only — instant, no network call. */
+function buildPlanFromCache(days, sourcePrefix, source) {
+  const startDate = new Date();
+  const usedByMeal = { breakfast: new Set(), lunch: new Set(), dinner: new Set() };
+  const planDays = [];
+
+  for (let d = 0; d < days; d++) {
+    const date = new Date(startDate);
+    date.setDate(date.getDate() + d);
+    const entry = { date: date.toISOString().slice(0, 10) };
+    MEAL_ORDER.forEach((meal) => {
+      const pool = cachedCandidates(meal, sourcePrefix).filter((r) => !usedByMeal[meal].has(r.id));
+      const liked = pool.filter((r) => state.prefs[r.id] === 1);
+      const finalPool = liked.length ? liked : pool;
+      const pick = finalPool[Math.floor(Math.random() * finalPool.length)];
+      usedByMeal[meal].add(pick.id);
+      entry[meal] = { recipeId: pick.id, locked: false };
+    });
+    planDays.push(entry);
+  }
+  return { days: planDays, generatedAt: new Date().toISOString(), source };
 }
 
 const normalizeTitle = (t) => t.trim().toLowerCase();
@@ -206,6 +271,19 @@ async function deduplicateAiPlan(aiDays, dislikedTitles) {
  */
 async function buildNewPlan() {
   const source = state.settings.recipeSource;
+
+  // If we've already fetched enough distinct recipes from this source to
+  // fill the plan with zero forced repeats, reuse them instantly instead of
+  // hitting the network — this is the slow part users actually feel,
+  // especially Gemini's single big generation call.
+  if (source === "mealdb" && canBuildPlanFromCache(state.settings.planDays, "mealdb-")) {
+    toast("Using recipes you've already found on TheMealDB");
+    return buildPlanFromCache(state.settings.planDays, "mealdb-", "mealdb");
+  }
+  if (source === "gemini" && state.settings.geminiKey && canBuildPlanFromCache(state.settings.planDays, "ai-")) {
+    toast("Using recipes Gemini already found for you");
+    return buildPlanFromCache(state.settings.planDays, "ai-", "ai");
+  }
 
   if (source === "mealdb") {
     showLoading("Finding recipes on TheMealDB…");
@@ -280,6 +358,19 @@ async function rerollSlot(dayIndex, meal) {
   const currentIds = new Set(
     state.plan.days.flatMap((d) => MEAL_ORDER.map((m) => d[m]?.recipeId).filter(Boolean))
   );
+
+  const sourcePrefix = source === "mealdb" ? "mealdb-" : source === "gemini" ? "ai-" : null;
+  if (sourcePrefix) {
+    const cached = cachedCandidates(meal, sourcePrefix).filter((r) => !currentIds.has(r.id));
+    if (cached.length > 0) {
+      const recipe = cached[Math.floor(Math.random() * cached.length)];
+      state.plan.days[dayIndex][meal] = { recipeId: recipe.id, locked: false };
+      Store.setPlan(state.plan);
+      toast(`Swapped in ${recipe.title}`);
+      renderPlan();
+      return;
+    }
+  }
 
   if (source === "mealdb") {
     showLoading("Asking TheMealDB for another option…");
@@ -699,6 +790,7 @@ function renderShopping() {
 function renderSettings() {
   const s = state.settings;
   const targets = computeTargets(s);
+  const webCache = Store.getWebRecipeCache();
 
   view.innerHTML = `
     <h2 class="section-title">About you</h2>
@@ -842,6 +934,14 @@ function renderSettings() {
     </div>
     <p class="hint" id="geminikey-hint">Stored only on this device (localStorage) and sent directly to Google when a plan or suggestion is requested. Get a free key at aistudio.google.com.</p>
 
+    <div class="toggle-row" style="padding:2px 2px 0;">
+      <div>
+        <div class="t-label">${webCache.length} recipe${webCache.length === 1 ? "" : "s"} cached from the web</div>
+        <div class="t-desc">Reused instantly when regenerating a plan or swapping a meal, instead of re-fetching. Clear it to force fresh results next time.</div>
+      </div>
+      <button class="link-btn" id="btn-clear-cache" style="width:auto; margin:0; white-space:nowrap; flex-shrink:0;" ${webCache.length ? "" : "disabled"}>Clear</button>
+    </div>
+
     <button class="save-btn" id="btn-save">Save settings</button>
     <button class="link-btn" id="btn-reset">Reset all data on this device</button>
     <div class="version-footer">What Should I Eat · v${VERSION} · ${BUILD_DATE}</div>
@@ -913,6 +1013,21 @@ function renderSettings() {
     localStorage.clear();
     location.reload();
   });
+
+  const clearCacheBtn = document.getElementById("btn-clear-cache");
+  if (!clearCacheBtn.disabled) {
+    clearCacheBtn.addEventListener("click", () => {
+      Store.setWebRecipeCache([]);
+      // Also drop them from the in-memory catalog so this takes effect
+      // immediately, not just after a reload. Any current plan slot that
+      // pointed at one of these self-heals via renderPlan's repair pass.
+      for (let i = RECIPES.length - 1; i >= 0; i--) {
+        if (isWebSourced(RECIPES[i])) RECIPES.splice(i, 1);
+      }
+      toast("Cache cleared — the next plan will fetch fresh recipes");
+      renderSettings();
+    });
+  }
 }
 
 function segmented(id, onChange) {

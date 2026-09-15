@@ -73,4 +73,14 @@ export const Store = {
   setHistory(h) {
     write("history", h);
   },
+  getWebRecipeCache() {
+    // Recipes already fetched from Gemini/TheMealDB, kept across sessions so
+    // regenerating a plan can reuse them instantly instead of always
+    // re-fetching. Array of recipe objects (app's normal shape) plus a
+    // cachedAt timestamp used to trim the oldest entries once over the cap.
+    return read("webRecipeCache", []);
+  },
+  setWebRecipeCache(list) {
+    write("webRecipeCache", list);
+  },
 };
