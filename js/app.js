@@ -5,6 +5,7 @@ import { generatePlan, regenerateSlot } from "./planner.js";
 import { buildShoppingList } from "./shopping.js";
 import { suggestRecipeWithAI, generatePlanWithAI } from "./ai.js";
 import { suggestMealDbRecipe, generatePlanFromMealDb } from "./mealdb.js";
+import { fetchRecipeBatch } from "./spoonacular.js";
 import { VERSION, BUILD_DATE } from "./version.js";
 
 const view = document.getElementById("view");
@@ -163,8 +164,11 @@ function minutesLabel(recipe) {
 // otherwise have run, and function declarations (unlike const) are fully
 // hoisted.
 function isWebSourced(r) {
-  return r.id.startsWith("ai-") || r.id.startsWith("mealdb-");
+  return r.id.startsWith("ai-") || r.id.startsWith("mealdb-") || r.id.startsWith("spoon-");
 }
+
+/** localStorage-cache id prefix for each online source. */
+const SOURCE_PREFIX = { spoonacular: "spoon-", mealdb: "mealdb-", gemini: "ai-" };
 function normalizeTitle(t) {
   return t.trim().toLowerCase();
 }
@@ -211,12 +215,14 @@ function registerSessionRecipes(recipes) {
  * distinct ids" could still mean the same handful of dishes over and over.
  */
 function cachedCandidates(meal, sourcePrefix) {
+  const maxIng = state.settings.maxIngredients;
   const matches = RECIPES.filter(
     (r) =>
       r.id.startsWith(sourcePrefix) &&
       r.meal === meal &&
       matchesDiet(r, state.settings.diet) &&
       r.minutes <= state.settings.cookTime[meal] + 15 &&
+      (!maxIng || r.ingredients.length <= maxIng) &&
       state.prefs[r.id] !== -1
   );
   const byTitle = new Map();
@@ -294,26 +300,111 @@ async function deduplicateAiPlan(aiDays, dislikedTitles) {
   }
 }
 
+// Meals whose last Spoonacular batch came back with almost nothing usable
+// (usually a strict "simple recipes" limit against a source that mostly has
+// long ingredient lists). Both the blocking and the background fetch honour
+// this, so we stop spending quota on a request that isn't paying off.
+// Cleared whenever settings change, since a looser limit may now match.
+const spoonExhausted = new Set();
+
+/**
+ * Fetch one bulk batch of Spoonacular recipes for a meal slot into the pool.
+ * Returns how many *new* recipes it added.
+ */
+async function topUpSpoonacularPool(meal) {
+  const fetched = await fetchRecipeBatch({
+    apiKey: state.settings.spoonacularKey,
+    meal,
+    diet: state.settings.diet,
+    maxReadyTime: state.settings.cookTime[meal],
+    maxIngredients: state.settings.maxIngredients,
+    categorizeIngredient,
+  });
+  const before = cachedCandidates(meal, "spoon-").length;
+  registerSessionRecipes(fetched);
+  return cachedCandidates(meal, "spoon-").length - before;
+}
+
+/**
+ * Keep the pool stocked without ever making the user wait. Runs after a
+ * plan is already on screen: any meal slot whose pool has thinned out gets
+ * topped up in the background, so the *next* regenerate/swap is instant
+ * too. Failures here are deliberately silent — nothing is blocked on it.
+ */
+function backgroundTopUp(targetPerMeal = 25) {
+  if (state.settings.recipeSource !== "spoonacular" || !state.settings.spoonacularKey) return;
+  if (backgroundTopUp._running) return;
+  backgroundTopUp._running = true;
+
+  (async () => {
+    try {
+      for (const meal of MEAL_ORDER) {
+        if (spoonExhausted.has(meal)) continue;
+        if (cachedCandidates(meal, "spoon-").length >= targetPerMeal) continue;
+        try {
+          const added = await topUpSpoonacularPool(meal);
+          if (added < 3) spoonExhausted.add(meal);
+        } catch (err) {
+          console.warn("background top-up skipped:", err.message);
+          return; // quota reached or offline — stop quietly, try again next time
+        }
+      }
+    } finally {
+      backgroundTopUp._running = false;
+    }
+  })();
+}
+
 /**
  * Build a full plan from whichever "Recipe source" is selected in Settings
- * (built-in catalog / TheMealDB / Gemini). Any failure — no network, no
- * key, rate limit, bad response — falls back to the built-in catalog so
- * the app always keeps working.
+ * (Spoonacular / TheMealDB / built-in catalog / Gemini). Any failure — no
+ * network, no key, rate limit, bad response — falls back to the built-in
+ * catalog so the app always keeps working.
  */
 async function buildNewPlan() {
   const source = state.settings.recipeSource;
+  const prefix = SOURCE_PREFIX[source];
 
   // If we've already fetched enough distinct recipes from this source to
   // fill the plan with zero forced repeats, reuse them instantly instead of
-  // hitting the network — this is the slow part users actually feel,
-  // especially Gemini's single big generation call.
-  if (source === "mealdb" && canBuildPlanFromCache(state.settings.planDays, "mealdb-")) {
-    toast("Using recipes you've already found on TheMealDB");
-    return buildPlanFromCache(state.settings.planDays, "mealdb-", "mealdb");
+  // hitting the network. This is the whole point of the pool: the slow part
+  // happens ahead of time, never while you're waiting on a swap.
+  if (prefix && canBuildPlanFromCache(state.settings.planDays, prefix)) {
+    const plan = buildPlanFromCache(state.settings.planDays, prefix, source);
+    backgroundTopUp(); // keep the pool stocked for next time, without blocking
+    return plan;
   }
-  if (source === "gemini" && state.settings.geminiKey && canBuildPlanFromCache(state.settings.planDays, "ai-")) {
-    toast("Using recipes Gemini already found for you");
-    return buildPlanFromCache(state.settings.planDays, "ai-", "ai");
+
+  if (source === "spoonacular" && state.settings.spoonacularKey) {
+    showLoading("Stocking up on simple recipes…");
+    try {
+      // One bulk call per meal type fills the pool for months.
+      for (const meal of MEAL_ORDER) {
+        if (spoonExhausted.has(meal)) continue; // not yielding — don't spend quota again
+        if (cachedCandidates(meal, "spoon-").length < state.settings.planDays) {
+          const added = await topUpSpoonacularPool(meal);
+          if (added < 3) spoonExhausted.add(meal);
+        }
+      }
+      if (canBuildPlanFromCache(state.settings.planDays, "spoon-")) {
+        return buildPlanFromCache(state.settings.planDays, "spoon-", "spoonacular");
+      }
+      // Don't degrade silently — say why they're seeing built-in recipes.
+      return {
+        ...generatePlan(state),
+        note: `Not enough recipes with ${state.settings.maxIngredients} ingredients or fewer — raise the limit in Settings. Using built-in recipes for now.`,
+      };
+    } catch (err) {
+      console.error(err);
+      return {
+        ...generatePlan(state),
+        note: err.message.includes("quota")
+          ? "Spoonacular daily quota reached — using built-in recipes."
+          : "Couldn't reach Spoonacular — using built-in recipes.",
+      };
+    } finally {
+      hideLoading();
+    }
   }
 
   if (source === "mealdb") {
@@ -390,7 +481,7 @@ async function rerollSlot(dayIndex, meal) {
     state.plan.days.flatMap((d) => MEAL_ORDER.map((m) => d[m]?.recipeId).filter(Boolean))
   );
 
-  const sourcePrefix = source === "mealdb" ? "mealdb-" : source === "gemini" ? "ai-" : null;
+  const sourcePrefix = SOURCE_PREFIX[source] || null;
   if (sourcePrefix) {
     // Exclude by title, not just id — the same real dish can be cached
     // under more than one id (Gemini gives it a fresh random one each
@@ -408,7 +499,38 @@ async function rerollSlot(dayIndex, meal) {
       Store.setPlan(state.plan);
       toast(`Swapped in ${recipe.title}`);
       renderPlan();
+      backgroundTopUp(); // pool got one thinner — restock quietly
       return;
+    }
+  }
+
+  if (source === "spoonacular" && state.settings.spoonacularKey) {
+    showLoading("Finding more simple recipes…");
+    try {
+      await topUpSpoonacularPool(meal);
+      const usedTitlesThisMeal = new Set(
+        state.plan.days.map((d) => recipeById(d[meal]?.recipeId)).filter(Boolean).map((r) => normalizeTitle(r.title))
+      );
+      const fresh = cachedCandidates(meal, "spoon-").filter(
+        (r) => !currentIds.has(r.id) && !usedTitlesThisMeal.has(normalizeTitle(r.title))
+      );
+      if (fresh.length > 0) {
+        const recipe = fresh[Math.floor(Math.random() * fresh.length)];
+        state.plan.days[dayIndex][meal] = { recipeId: recipe.id, locked: false };
+        Store.setPlan(state.plan);
+        toast(`Swapped in ${recipe.title}`);
+        renderPlan();
+        return;
+      }
+    } catch (err) {
+      console.error(err);
+      toast(
+        err.message.includes("quota")
+          ? "Spoonacular quota reached — picking from built-in recipes"
+          : "Spoonacular unavailable — picking from built-in recipes"
+      );
+    } finally {
+      hideLoading();
     }
   }
 
@@ -489,7 +611,9 @@ document.getElementById("btn-regenerate").addEventListener("click", async (e) =>
   btn.disabled = true;
   state.plan = await buildNewPlan();
   Store.setPlan(state.plan);
-  toast(state.plan.source !== "builtin" ? "New plan sourced from the web" : "New plan generated");
+  // A `note` means the plan fell back to another source — say why rather
+  // than reporting a generic success over the top of it.
+  toast(state.plan.note || (state.plan.source !== "builtin" ? "New plan sourced from the web" : "New plan generated"));
   btn.disabled = false;
   render();
 });
@@ -959,15 +1083,30 @@ function renderSettings() {
         .join("")}
     </div>
 
+    <h2 class="section-title">Simple recipes</h2>
+    <div class="card" style="padding:0 14px;">
+      <div class="slider-row">
+        <div class="s-top"><span>Most ingredients per recipe</span><span id="maxing-val">${s.maxIngredients}</span></div>
+        <input type="range" min="4" max="20" step="1" value="${s.maxIngredients}" id="f-maxingredients">
+      </div>
+    </div>
+    <p class="hint">Only offer recipes with at most this many ingredients. Lower = simpler, quicker shopping; higher = more choice. Spoonacular is the only source that reports a reliable ingredient list, so this has the most effect there.</p>
+
     <h2 class="section-title">Recipe source</h2>
     <div class="card" style="padding:14px;">
       <div class="segmented" id="f-recipesource">
+        <button data-v="spoonacular" class="${s.recipeSource === "spoonacular" ? "active" : ""}">Spoonacular</button>
+        <button data-v="mealdb" class="${s.recipeSource === "mealdb" ? "active" : ""}">Free</button>
         <button data-v="builtin" class="${s.recipeSource === "builtin" ? "active" : ""}">Built-in</button>
-        <button data-v="mealdb" class="${s.recipeSource === "mealdb" ? "active" : ""}">Web (free)</button>
-        <button data-v="gemini" class="${s.recipeSource === "gemini" ? "active" : ""}">Gemini AI</button>
+        <button data-v="gemini" class="${s.recipeSource === "gemini" ? "active" : ""}">Gemini</button>
       </div>
       <p class="hint" style="margin-top:12px; margin-bottom:0;" id="recipesource-desc"></p>
     </div>
+    <div class="field" style="margin-top:10px;" id="spoonkey-field">
+      <label>Spoonacular API key</label>
+      <input type="password" id="f-spoonkey" value="${s.spoonacularKey}" placeholder="Paste your API key">
+    </div>
+    <p class="hint" id="spoonkey-hint">Free key at spoonacular.com/food-api. Stored only on this device and sent directly to Spoonacular. One request fetches ~100 recipes into your local pool, so everyday use barely touches the quota.</p>
     <div class="field" style="margin-top:10px;" id="geminikey-field">
       <label>Gemini API key</label>
       <input type="password" id="f-geminikey" value="${s.geminiKey}" placeholder="Paste your API key">
@@ -1014,20 +1153,33 @@ function renderSettings() {
   toggle("f-diet-glutenfree", (v) => (s.diet.glutenFree = v));
 
   const RECIPE_SOURCE_DESC = {
-    builtin: "Picks from the app's ~65 built-in sample recipes. Works fully offline; photos are approximate.",
-    mealdb: "Finds real recipes on TheMealDB (themealdb.com) — free, no account needed, and each one shows the actual photo of that dish. Nutrition and cook time are estimates, since TheMealDB doesn't provide them.",
-    gemini: "Asks Google's Gemini, with Search grounding, to find real recipes online matching your settings. Needs a free API key below.",
+    spoonacular:
+      "Recommended. 360,000+ real recipes with the actual photo of each dish, real nutrition, real cook times, and a true ingredient count — so the \"simple recipes\" limit above actually works. Fetches ~100 at a time into a local pool, so swaps are instant afterwards. Needs a free API key below.",
+    mealdb:
+      "TheMealDB — free, no account needed, real photos. But it's a small library (~790 recipes, only 19 breakfasts) and most recipes have 10+ ingredients, so the \"simple recipes\" limit has little to work with. Nutrition and cook times are estimates.",
+    builtin: "Picks from the app's ~65 built-in sample recipes. Works fully offline; photos are approximate matches, not the specific dish.",
+    gemini:
+      "Asks Google's Gemini, with Search grounding, to find recipes online. Slow (a whole plan is one big generation) and returns no photo, so the UI shows a plain colour block. Kept for tinkering — not the recommended path.",
   };
   function updateRecipeSourceUI() {
     document.getElementById("recipesource-desc").textContent = RECIPE_SOURCE_DESC[s.recipeSource];
     const showGemini = s.recipeSource === "gemini";
+    const showSpoon = s.recipeSource === "spoonacular";
     document.getElementById("geminikey-field").hidden = !showGemini;
     document.getElementById("geminikey-hint").hidden = !showGemini;
+    document.getElementById("spoonkey-field").hidden = !showSpoon;
+    document.getElementById("spoonkey-hint").hidden = !showSpoon;
   }
   updateRecipeSourceUI();
   segmented("f-recipesource", (v) => {
     s.recipeSource = v;
     updateRecipeSourceUI();
+  });
+
+  document.getElementById("f-spoonkey").addEventListener("input", (e) => (s.spoonacularKey = e.target.value.trim()));
+  document.getElementById("f-maxingredients").addEventListener("input", (e) => {
+    s.maxIngredients = Number(e.target.value);
+    document.getElementById("maxing-val").textContent = e.target.value;
   });
 
   view.querySelectorAll(".cooktime-slider").forEach((el) => {
@@ -1039,11 +1191,14 @@ function renderSettings() {
 
   document.getElementById("btn-save").addEventListener("click", async (e) => {
     Store.setSettings(s);
+    // Settings changed — a looser ingredient limit (or a new key) may now
+    // match where a previous fetch came back empty, so allow retries again.
+    spoonExhausted.clear();
     e.currentTarget.disabled = true;
     e.currentTarget.textContent = "Saving…";
     state.plan = await buildNewPlan();
     Store.setPlan(state.plan);
-    toast(state.plan.source !== "builtin" ? "Settings saved — plan sourced from the web" : "Settings saved — plan updated");
+    toast(state.plan.note || (state.plan.source !== "builtin" ? "Settings saved — plan sourced from the web" : "Settings saved — plan updated"));
     state.tab = "plan";
     render();
   });

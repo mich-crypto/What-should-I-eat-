@@ -84,12 +84,22 @@ the same as running it locally.
 ## Where recipes come from
 
 Pick one in Settings → Recipe source. Whichever you pick, every recipe it
-fetches (Gemini and TheMealDB both) is cached on-device — see **Caching web
-recipes** below for why that matters for speed.
+fetches is cached on-device — see **Caching web recipes** below for why
+that matters for speed.
 
-- **TheMealDB** (`js/mealdb.js`) — **the default.** A free, keyless public
-  recipe API (themealdb.com). "Regenerate plan" / "Try another" fetch a
-  real recipe matching the meal type and your dietary settings, and —
+- **Spoonacular** (`js/spoonacular.js`) — **recommended.** 360,000+ recipes,
+  each with the real photo of that exact dish, real nutrition, real cook
+  times, and a true ingredient list. It's the only source that reports a
+  countable ingredient list, which is what makes the **Simple recipes**
+  limit an actual filter instead of a wish. One request returns up to 100
+  fully-populated recipes, so ~3 requests fill a pool that lasts months and
+  every swap afterwards is instant. Needs a free API key
+  (spoonacular.com/food-api).
+
+- **TheMealDB** (`js/mealdb.js`) — **the keyless default**, so the app works
+  with zero setup. A free public recipe API (themealdb.com). "Regenerate
+  plan" / "Try another" fetch a real recipe matching the meal type and your
+  dietary settings, and —
   unlike the built-in catalog's approximate stock photos — the photo shown
   is the actual photo of that exact dish. Trade-off: TheMealDB doesn't
   provide nutrition or cook-time data (or a breakfast/lunch/dinner split
@@ -117,11 +127,19 @@ recipes** below for why that matters for speed.
   replaced with a single targeted re-ask before the plan is shown, so a
   duplicated dish never actually reaches the app.
 
-All three return the exact same recipe shape (title, ingredients, steps,
+All four return the exact same recipe shape (title, ingredients, steps,
 nutrition, tags), so the rest of the app — planner, shopping list, swipe
 UI, dietary filtering — doesn't know or care which source a recipe came
-from. Swapping in another dedicated recipe API (Spoonacular, Edamam, etc.)
-instead of/alongside these is a matter of matching that same shape.
+from. Adding another one is a matter of matching that same shape in a
+single new file.
+
+A note on the ones deliberately *not* integrated, since they come up:
+**Edamam** no longer has a free tier (their Recipe Search API starts at
+$9/month); **Open Food Facts** is a barcoded packaged-product database, not
+recipes — searching it for "chicken curry" returns supermarket ready-meals;
+and **BigOven**'s API is key-gated with no verifiable free tier. Spoonacular
+was the only one of that group that's both free-tier and an actual recipe
+database.
 
 ### Variety across the plan
 
@@ -141,13 +159,41 @@ end up cached under more than one id (Gemini hands it a fresh random id
 each time it's suggested) — an id-only check would still let the same
 dish appear twice under two different ids.
 
+## Simple recipes
+
+Settings → **Simple recipes** sets the most ingredients a recipe may have
+to be offered (default 8). It's applied when picking from the pool, and
+passed to the fetch so batches skew simple in the first place.
+
+It only really bites on Spoonacular, because that's the only source with a
+trustworthy ingredient list. For reference, TheMealDB's median recipe has
+**12 ingredients** and only ~12% have 8 or fewer — so on that source a
+strict limit mostly just empties the pool.
+
+If a limit is so strict that a fetched batch yields almost nothing, the app
+says so ("Not enough recipes with N ingredients or fewer — raise the limit
+in Settings"), falls back to built-in recipes so you still get a plan, and
+**stops re-requesting that meal type** rather than burning daily quota on a
+query that isn't paying off. Saving settings clears that back-off, so
+raising the limit retries immediately.
+
 ## Caching web recipes (so regenerating a plan is fast)
+
+This is the core of how the app stays fast. Fetching happens **ahead of
+time and in bulk**; choosing happens **locally and instantly**. Nothing the
+user does waits on a network call.
 
 A whole plan from Gemini is one big generation request — noticeably slower
 than picking from a local list — and TheMealDB needs one network round-trip
-per meal slot. Neither is instant, so every recipe either source returns
-gets saved on-device (`js/storage.js`'s `webRecipeCache`, capped at 300,
-oldest trimmed first) and restored on every app load.
+per meal slot. Spoonacular sidesteps both by returning up to 100 recipes
+per request. Every recipe any source returns gets saved on-device
+(`js/storage.js`'s `webRecipeCache`, capped at 300, oldest trimmed first)
+and restored on every app load.
+
+On Spoonacular the pool also **restocks itself in the background**: once a
+plan is on screen, any meal type whose pool has thinned out is topped up
+without a loading spinner, so the *next* regenerate and swap are instant
+too. Background failures are silent by design — nothing is blocked on them.
 
 "Regenerate plan" and "Try another" check that cache first: if it already
 has enough distinct matching recipes to fill the request (same meal type,
@@ -191,7 +237,8 @@ js/nutrition.js      BMR/TDEE + macro targets
 js/planner.js        Weekly plan generation & single-slot regeneration
 js/shopping.js       Ingredient aggregation into a shopping list
 js/ai.js             Optional Gemini-powered recipe suggestions
-js/mealdb.js          TheMealDB integration (default recipe source)
+js/spoonacular.js     Spoonacular integration (recommended source, bulk prefetch)
+js/mealdb.js          TheMealDB integration (free, keyless fallback)
 js/app.js            UI rendering, swipe gestures, event wiring
 js/version.js        App version shown in Settings
 icons/               Generated app icons (apple-touch-icon + PWA icons)

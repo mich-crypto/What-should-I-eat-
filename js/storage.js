@@ -32,10 +32,17 @@ export const DEFAULT_SETTINGS = {
   maximizeEfficiency: true,
   cookTime: { breakfast: 15, lunch: 30, dinner: 45 },
   diet: { vegetarian: false, vegan: false, glutenFree: false },
-  // Where recipes come from: 'builtin' (offline sample catalog),
-  // 'mealdb' (TheMealDB — free, no key, real per-recipe photos),
-  // or 'gemini' (Google AI with Search grounding, needs an API key).
+  // "Simple recipes": the most ingredients a recipe may have to be
+  // offered. Spoonacular is the only source that reliably carries an
+  // ingredient list we can count before choosing.
+  maxIngredients: 8,
+  // Where recipes come from: 'spoonacular' (best data + real photos +
+  // ingredient counts, needs a free key), 'mealdb' (TheMealDB — free, no
+  // key, real photos, but a small corpus), 'builtin' (offline sample
+  // catalog), or 'gemini' (Google AI with Search grounding, needs a key —
+  // slow, and returns no photo, so it's no longer the recommended path).
   recipeSource: "mealdb",
+  spoonacularKey: "",
   geminiKey: "",
 };
 
