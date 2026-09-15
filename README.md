@@ -62,7 +62,12 @@ the same as running it locally.
   title/details to see the full recipe.
 - **Shopping tab** — the whole plan's ingredients combined, scaled by
   household size, grouped by aisle/category, with a tag on any ingredient
-  reused across multiple meals.
+  reused across multiple meals. Recomputed from scratch on every visit, so
+  swapping a meal drops its now-unused ingredients and adds the new ones —
+  matching by name/unit after normalizing casing, plurals and common unit
+  wording (e.g. "onions"/"Onion", "grams"/"g"), so the same ingredient
+  phrased differently by different recipes merges into one row instead of
+  sitting next to it as a near-duplicate.
 - **Settings tab** — personal details for the nutrition target, household
   size, plan length, dietary needs (vegetarian/vegan/gluten-free — enforced
   everywhere, not just a filter you have to remember), a "seasonal
@@ -71,6 +76,10 @@ the same as running it locally.
 - **Recipe detail** — tapping any meal (in the Plan tab or Discover) opens a
   sheet with the photo, macros, full ingredient list, step-by-step
   instructions, and (for web-sourced recipes) a note on where it came from.
+- **Loading state** — whenever the app is waiting on TheMealDB or Gemini
+  (regenerating the plan, swapping a single slot, or Discover's "spark"
+  idea), a small animated cooking-pot overlay shows instead of a bare
+  spinner, since these calls can take a couple of seconds.
 
 ## Where recipes come from
 
