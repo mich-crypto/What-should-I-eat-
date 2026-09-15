@@ -1,0 +1,10 @@
+name = "what-should-i-eat-sync"
+main = "worker/index.js"
+compatibility_date = "2026-01-01"
+
+# Created with:  npx wrangler d1 create what-should-i-eat
+# Paste the database_id it prints into the line below.
+[[d1_databases]]
+binding = "DB"
+database_name = "what-should-i-eat"
+database_id = "REPLACE_WITH_YOUR_DATABASE_ID"

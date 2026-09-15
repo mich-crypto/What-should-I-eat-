@@ -6,6 +6,7 @@ import { buildShoppingList } from "./shopping.js";
 import { suggestRecipeWithAI, generatePlanWithAI } from "./ai.js";
 import { suggestMealDbRecipe, generatePlanFromMealDb } from "./mealdb.js";
 import { fetchRecipeBatch } from "./spoonacular.js";
+import { Sync, makeDebouncedPush, shareableSettings } from "./sync.js";
 import { VERSION, BUILD_DATE } from "./version.js";
 
 const view = document.getElementById("view");
@@ -36,7 +37,7 @@ let state = {
   plan: Store.getPlan(),
   discoverMeal: "dinner",
   discoverIndex: 0,
-  shoppingChecked: {},
+  shoppingChecked: Store.getShoppingChecked(),
 };
 
 // Recipes already fetched from Gemini/TheMealDB in a previous session,
@@ -60,6 +61,10 @@ const MEAL_ORDER_FOR_VALIDATION = ["breakfast", "lunch", "dinner"];
 
 if (!planIsValid(state.plan)) {
   state.plan = generatePlan(state);
+  // Store directly, NOT savePlan(). This is an automatic local repair, not
+  // something the user chose — pushing it would stamp a fresh timestamp on
+  // a throwaway plan and beat the plan the household actually made. The
+  // sync pull at the end of this file replaces it if the server has one.
   Store.setPlan(state.plan);
 }
 
@@ -78,6 +83,14 @@ function markUsed(recipeId) {
 function setPref(recipeId, value) {
   state.prefs[recipeId] = value;
   Store.setPrefs(state.prefs);
+  queueSyncPush();
+}
+
+/** Persist the plan and let the household know. Single choke point so a new
+ *  call site can't silently skip sync. */
+function savePlan() {
+  Store.setPlan(state.plan);
+  queueSyncPush();
 }
 
 // ---------------------------------------------------------------- Recipe detail modal
@@ -496,7 +509,7 @@ async function rerollSlot(dayIndex, meal) {
     if (cached.length > 0) {
       const recipe = cached[Math.floor(Math.random() * cached.length)];
       state.plan.days[dayIndex][meal] = { recipeId: recipe.id, locked: false };
-      Store.setPlan(state.plan);
+      savePlan();
       toast(`Swapped in ${recipe.title}`);
       renderPlan();
       backgroundTopUp(); // pool got one thinner — restock quietly
@@ -517,7 +530,7 @@ async function rerollSlot(dayIndex, meal) {
       if (fresh.length > 0) {
         const recipe = fresh[Math.floor(Math.random() * fresh.length)];
         state.plan.days[dayIndex][meal] = { recipeId: recipe.id, locked: false };
-        Store.setPlan(state.plan);
+        savePlan();
         toast(`Swapped in ${recipe.title}`);
         renderPlan();
         return;
@@ -547,7 +560,7 @@ async function rerollSlot(dayIndex, meal) {
       });
       registerSessionRecipes([recipe]);
       state.plan.days[dayIndex][meal] = { recipeId: recipe.id, locked: false };
-      Store.setPlan(state.plan);
+      savePlan();
       toast(`Swapped in ${recipe.title}`);
       renderPlan();
       return;
@@ -578,7 +591,7 @@ async function rerollSlot(dayIndex, meal) {
       });
       registerSessionRecipes([recipe]);
       state.plan.days[dayIndex][meal] = { recipeId: recipe.id, locked: false };
-      Store.setPlan(state.plan);
+      savePlan();
       toast(`Swapped in ${recipe.title}`);
       renderPlan();
       return;
@@ -591,7 +604,7 @@ async function rerollSlot(dayIndex, meal) {
   }
 
   const recipe = regenerateSlot(state.plan, dayIndex, meal, state);
-  Store.setPlan(state.plan);
+  savePlan();
   toast(`Swapped in ${recipe.title}`);
   renderPlan();
 }
@@ -610,7 +623,7 @@ document.getElementById("btn-regenerate").addEventListener("click", async (e) =>
   const btn = e.currentTarget; // cache it — e.currentTarget is nulled out once the event finishes dispatching, before our `await` resumes
   btn.disabled = true;
   state.plan = await buildNewPlan();
-  Store.setPlan(state.plan);
+  savePlan();
   // A `note` means the plan fell back to another source — say why rather
   // than reporting a generic success over the top of it.
   toast(state.plan.note || (state.plan.source !== "builtin" ? "New plan sourced from the web" : "New plan generated"));
@@ -706,7 +719,7 @@ function renderPlan() {
     })
     .join("");
 
-  if (repaired) Store.setPlan(state.plan);
+  if (repaired) savePlan();
 
   view.innerHTML = `<h2 class="section-title">${state.settings.planDays}-day plan · ${state.settings.persons} ${state.settings.persons === 1 ? "person" : "people"}</h2>${html}`;
 
@@ -905,9 +918,14 @@ async function askAI(pool) {
 
 // ---------------------------------------------------------------- Shopping tab
 
+/** Checkbox state is {checked, at} so two phones can merge ticks per item. */
+function isChecked(key) {
+  return !!state.shoppingChecked[key]?.checked;
+}
+
 function renderShopping() {
   const list = buildShoppingList(state.plan, state.settings.persons);
-  const checkedCount = Object.values(state.shoppingChecked).filter(Boolean).length;
+  const checkedCount = list.items.filter((i) => isChecked(`${i.name}|${i.unit}`)).length;
 
   const groups = Object.keys(list.grouped)
     .map(
@@ -917,7 +935,7 @@ function renderShopping() {
         ${list.grouped[cat]
           .map((item) => {
             const key = `${item.name}|${item.unit}`;
-            const checked = !!state.shoppingChecked[key];
+            const checked = isChecked(key);
             return `
             <div class="shop-item ${checked ? "checked" : ""}" data-key="${key}">
               <div class="checkbox ${checked ? "checked" : ""}">${checked ? '<svg viewBox="0 0 24 24"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>' : ""}</div>
@@ -937,16 +955,67 @@ function renderShopping() {
       <div class="stat"><div class="num">${checkedCount}/${list.totalItems}</div><div class="lbl">checked off</div></div>
     </div>
     ${state.settings.maximizeEfficiency ? `<p class="hint">Efficiency mode is on — recipes were chosen to reuse ingredients, so fewer items go to waste.</p>` : ""}
+    <button class="link-btn" id="btn-export-list" style="margin-top:14px;">Send list to Reminders</button>
     ${groups}
   `;
 
   view.querySelectorAll(".shop-item").forEach((el) => {
     el.addEventListener("click", () => {
       const key = el.dataset.key;
-      state.shoppingChecked[key] = !state.shoppingChecked[key];
+      // Record *when* it changed, not just that it did — that timestamp is
+      // what lets the other phone's ticks merge instead of overwriting.
+      state.shoppingChecked[key] = { checked: !isChecked(key), at: Date.now() };
+      Store.setShoppingChecked(state.shoppingChecked);
+      queueSyncPush();
       renderShopping();
     });
   });
+
+  document.getElementById("btn-export-list").addEventListener("click", () => exportShoppingList(list));
+}
+
+/**
+ * Hand the shopping list to iOS.
+ *
+ * A web app can't write to Reminders directly, so this goes through the
+ * best channel available, in order:
+ *  1. An Apple Shortcut (set up once) — the only route that creates each
+ *     item as its *own* reminder in a named list.
+ *  2. The iOS share sheet — no setup, but Reminders receives it as a
+ *     single reminder containing the whole list.
+ *  3. Clipboard — works everywhere, paste it wherever you like.
+ * Already-ticked items are left out; you don't need to buy those.
+ */
+async function exportShoppingList(list) {
+  const remaining = list.items.filter((i) => !isChecked(`${i.name}|${i.unit}`));
+  if (remaining.length === 0) {
+    toast("Everything's ticked off already");
+    return;
+  }
+  const text = remaining.map((i) => `${i.name} — ${i.qty} ${i.unit}`).join("\n");
+
+  if (state.settings.remindersShortcut) {
+    const name = encodeURIComponent(state.settings.remindersShortcut);
+    location.href = `shortcuts://run-shortcut?name=${name}&input=text&text=${encodeURIComponent(text)}`;
+    return;
+  }
+
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: "Shopping list", text });
+      return;
+    } catch (err) {
+      if (err.name === "AbortError") return; // user dismissed the sheet
+      console.warn("share failed, falling back to clipboard:", err.message);
+    }
+  }
+
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(`Copied ${remaining.length} items — paste into Reminders`);
+  } catch {
+    toast("Couldn't export the list on this device");
+  }
 }
 
 // ---------------------------------------------------------------- Settings tab
@@ -1113,6 +1182,30 @@ function renderSettings() {
     </div>
     <p class="hint" id="geminikey-hint">Stored only on this device (localStorage) and sent directly to Google when a plan or suggestion is requested. Get a free key at aistudio.google.com.</p>
 
+    <h2 class="section-title">Household sync</h2>
+    <div class="card" style="padding:14px;">
+      <div class="field">
+        <label>Sync server URL</label>
+        <input type="text" id="f-syncendpoint" value="${s.syncEndpoint}" placeholder="https://….workers.dev" autocapitalize="off" autocorrect="off">
+      </div>
+      <div class="field" style="margin-bottom:6px;">
+        <label>Household code</label>
+        <input type="text" id="f-householdcode" value="${s.householdCode}" placeholder="XXXX-XXXX-XXXX" autocapitalize="characters" autocorrect="off">
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="link-btn" id="btn-new-household" style="margin:0;">Create household</button>
+        <button class="link-btn" id="btn-sync-now" style="margin:0;">Sync now</button>
+      </div>
+    </div>
+    <p class="hint">Enter the same code on both phones and the meal plan, shopping list and likes stay in step — tick something off in the shop and it disappears on the other phone too. The app still works fully offline; syncing happens in the background. The code is the only credential, so treat it like a shared password. API keys never sync.</p>
+
+    <h2 class="section-title">Reminders export</h2>
+    <div class="field">
+      <label>Apple Shortcut name (optional)</label>
+      <input type="text" id="f-remindershortcut" value="${s.remindersShortcut}" placeholder="Shopping List" autocapitalize="words" autocorrect="off">
+    </div>
+    <p class="hint">The Shopping tab's "Send list to Reminders" button uses this. Make a Shortcut that takes text input and adds it to a Reminders list, put its exact name here, and each item becomes its own reminder. Leave it empty and the button uses the normal iOS share sheet instead.</p>
+
     <div class="toggle-row" style="padding:2px 2px 0;">
       <div>
         <div class="t-label">${webCache.length} recipe${webCache.length === 1 ? "" : "s"} cached from the web</div>
@@ -1177,6 +1270,39 @@ function renderSettings() {
   });
 
   document.getElementById("f-spoonkey").addEventListener("input", (e) => (s.spoonacularKey = e.target.value.trim()));
+  document.getElementById("f-syncendpoint").addEventListener("input", (e) => (s.syncEndpoint = e.target.value.trim()));
+  document.getElementById("f-householdcode").addEventListener("input", (e) => (s.householdCode = e.target.value.trim().toUpperCase()));
+  document.getElementById("f-remindershortcut").addEventListener("input", (e) => (s.remindersShortcut = e.target.value.trim()));
+
+  document.getElementById("btn-new-household").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    if (!s.syncEndpoint) return toast("Add your sync server URL first");
+    btn.disabled = true;
+    try {
+      const code = await Sync.createHousehold(s.syncEndpoint);
+      s.householdCode = code;
+      document.getElementById("f-householdcode").value = code;
+      Store.setSettings(s);
+      state.settings = s;
+      toast(`Household ${code} created — enter it on your other phone`);
+      queueSyncPush(); // seed it with what's already on this device
+    } catch (err) {
+      console.error(err);
+      toast(err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById("btn-sync-now").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    Store.setSettings(s);
+    state.settings = s;
+    if (!syncConfigured()) return toast("Add a sync server URL and household code first");
+    btn.disabled = true;
+    await syncPullNow({ quiet: false });
+    btn.disabled = false;
+  });
   document.getElementById("f-maxingredients").addEventListener("input", (e) => {
     s.maxIngredients = Number(e.target.value);
     document.getElementById("maxing-val").textContent = e.target.value;
@@ -1197,7 +1323,7 @@ function renderSettings() {
     e.currentTarget.disabled = true;
     e.currentTarget.textContent = "Saving…";
     state.plan = await buildNewPlan();
-    Store.setPlan(state.plan);
+    savePlan();
     toast(state.plan.note || (state.plan.source !== "builtin" ? "Settings saved — plan sourced from the web" : "Settings saved — plan updated"));
     state.tab = "plan";
     render();
@@ -1245,4 +1371,102 @@ function toggle(id, onChange) {
   });
 }
 
+// ---------------------------------------------------------------- Household sync
+
+function syncConfigured() {
+  return !!(state.settings.syncEndpoint && state.settings.householdCode);
+}
+
+/** The slice of local state that belongs to the household, not to this phone. */
+function localSyncDoc() {
+  const planRecipes = state.plan
+    ? [
+        ...new Map(
+          state.plan.days
+            .flatMap((d) => MEAL_ORDER.map((m) => recipeById(d[m]?.recipeId)))
+            .filter(Boolean)
+            .map((r) => [r.id, r])
+        ).values(),
+      ]
+    : [];
+  return {
+    plan: state.plan,
+    // The plan's recipes travel with it. Without this the other phone sees
+    // a plan full of ids it has never fetched, and self-heals them away
+    // into built-in recipes — i.e. a different plan than the one you made.
+    planRecipes,
+    prefs: state.prefs,
+    shoppingChecked: state.shoppingChecked,
+    settings: shareableSettings(state.settings),
+    updatedAt: Date.now(),
+  };
+}
+
+/** Fold a document from the server back into local state + storage. */
+function applySyncDoc(doc, { rerender = true } = {}) {
+  if (!doc) return;
+  if (Array.isArray(doc.planRecipes) && doc.planRecipes.length) {
+    registerSessionRecipes(doc.planRecipes);
+  }
+  if (doc.plan && planIsValid(doc.plan)) {
+    state.plan = doc.plan;
+    // Store directly, NOT savePlan() — this change came *from* the server,
+    // so pushing it back would bounce a write between the two phones
+    // forever.
+    Store.setPlan(state.plan);
+  }
+  if (doc.prefs) {
+    state.prefs = { ...state.prefs, ...doc.prefs };
+    Store.setPrefs(state.prefs);
+  }
+  if (doc.shoppingChecked) {
+    state.shoppingChecked = doc.shoppingChecked;
+    Store.setShoppingChecked(state.shoppingChecked);
+  }
+  if (doc.settings) {
+    // Keep this device's own keys and sync config; take the rest.
+    const { spoonacularKey, geminiKey, syncEndpoint, householdCode, remindersShortcut } = state.settings;
+    state.settings = {
+      ...state.settings, ...doc.settings,
+      spoonacularKey, geminiKey, syncEndpoint, householdCode, remindersShortcut,
+    };
+    Store.setSettings(state.settings);
+  }
+  if (rerender) render();
+}
+
+// A hoisted `function`, with the debouncer created lazily inside it — this
+// gets called from module top-level code (the startup plan repair) that
+// runs before a `const` on this line would have been initialised.
+let debouncedPush = null;
+function queueSyncPush() {
+  if (!syncConfigured()) return;
+  if (!debouncedPush) {
+    debouncedPush = makeDebouncedPush(async () => {
+      const merged = await Sync.push(state.settings.syncEndpoint, state.settings.householdCode, localSyncDoc());
+      applySyncDoc(merged); // the server may hand back the other phone's changes folded in
+    });
+  }
+  debouncedPush();
+}
+
+async function syncPullNow({ quiet = true } = {}) {
+  if (!syncConfigured()) return;
+  try {
+    const doc = await Sync.pull(state.settings.syncEndpoint, state.settings.householdCode);
+    applySyncDoc(doc);
+    if (!quiet) toast("Synced with your household");
+  } catch (err) {
+    console.warn("sync pull skipped:", err.message);
+    if (!quiet) toast(err.message);
+  }
+}
+
+// Pull when the app opens and whenever it returns to the foreground — that's
+// when the other phone's changes are most likely to be waiting.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") syncPullNow();
+});
+
 render();
+syncPullNow();

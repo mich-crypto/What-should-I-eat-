@@ -11,7 +11,7 @@
 // page's controllerchange listener (in index.html) reloads it once, so a
 // push reaches anyone with the app already open without them doing
 // anything.
-const CACHE_VERSION = "1.7.0";
+const CACHE_VERSION = "1.8.0";
 const CACHE = `wsie-shell-v${CACHE_VERSION}`;
 const SHELL = [
   "./",
@@ -26,6 +26,7 @@ const SHELL = [
   "./js/ai.js",
   "./js/mealdb.js",
   "./js/spoonacular.js",
+  "./js/sync.js",
   "./js/version.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
@@ -53,6 +54,13 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
   if (url.origin !== location.origin) return; // let recipe photos / API calls pass through
+
+  // Never touch sync traffic, even when the sync Worker is hosted on this
+  // same origin (a normal Cloudflare Pages + Worker-route setup). Caching a
+  // household GET would serve one phone stale data, and the offline
+  // fallback below would hand back index.html, which then fails to parse
+  // as JSON.
+  if (url.pathname.startsWith("/api/") || url.pathname.includes("/api/household")) return;
 
   event.respondWith(
     fetch(event.request)

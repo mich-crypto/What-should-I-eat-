@@ -5,9 +5,14 @@ A simple, installable web app for planning breakfast, lunch and dinner for
 discovery screen, an auto-generated shopping list, and a "like" button that
 nudges future plans toward your taste.
 
-No build step, no backend, no account — it's static HTML/CSS/JS that stores
+No build step and no account — it's static HTML/CSS/JS that stores
 everything on-device (`localStorage`) and installs to the iPhone Home Screen
 as a standalone app.
+
+There's one **optional** backend: a small Cloudflare Worker + D1 database
+that keeps two phones in a household in step (see **Household sync**). The
+app is fully functional without it, and stays local-first with it — nothing
+in the UI ever waits on the network.
 
 ## Run it locally
 
@@ -209,6 +214,69 @@ you'd rather force fresh results next time than keep reusing what's been
 fetched before — clearing takes effect immediately, not just after a
 reload.
 
+## Household sync (Cloudflare Worker + D1)
+
+Optional. Without it the app is entirely local; with it, two phones in the
+same household share the meal plan, shopping list and likes — tick milk off
+in the shop and it disappears on the other phone too.
+
+### Deploy it
+
+```bash
+npm install -g wrangler        # once
+wrangler login
+
+wrangler d1 create what-should-i-eat
+#   ^ paste the printed database_id into wrangler.toml
+
+wrangler d1 execute what-should-i-eat --remote --file=worker/schema.sql
+wrangler deploy
+```
+
+`wrangler deploy` prints a URL like `https://what-should-i-eat-sync.<you>.workers.dev`.
+
+### Pair the phones
+
+1. Settings → **Household sync** → paste that URL into **Sync server URL**.
+2. Tap **Create household** — it generates a code like `7K2P-9XQF-3RTB`.
+3. On the second phone, enter the *same URL and code*, then tap **Sync now**.
+
+### How it works, and what it deliberately doesn't do
+
+**Local-first.** Every read the UI does still comes from localStorage, so
+swaps stay instant and the app keeps working with no signal — which is
+exactly where a shopping list is needed most. Sync is a background
+reconcile on top: pull on open and on returning to the foreground, push
+(debounced) after a change. Nothing in the UI ever waits on the network.
+
+**Merging, not last-write-wins.** Whole-document LWW would silently throw
+away one person's work. So the plan takes the newer side (and the recipes
+it references travel with it, or the other phone would render a plan full
+of ids it never fetched), likes merge additively from both phones, and the
+shopping checkboxes merge **per item** — because that's the one thing you
+genuinely both edit at once, standing in different aisles.
+
+**The household code is the only credential.** No accounts, no passwords,
+no email. It's ~59 bits of randomness, which isn't brute-forceable at any
+sane request rate, but it is *not* real authentication: anyone with the
+code has the data, and revoking means changing the code on every device.
+That's a deliberate trade for a family shopping list — don't reuse the
+pattern for anything sensitive. **API keys never sync**; they stay on the
+device that entered them.
+
+## Send the shopping list to iPhone Reminders
+
+The Shopping tab has a **Send list to Reminders** button. Already-ticked
+items are left out. It uses the best channel available:
+
+1. **An Apple Shortcut** — the only route that makes each item its *own*
+   reminder in a list you choose. Create a Shortcut that takes text input
+   and adds it to Reminders, then put its exact name in Settings →
+   **Reminders export**.
+2. **The iOS share sheet** — no setup, but Reminders receives the list as a
+   single reminder.
+3. **Clipboard** — the universal fallback.
+
 ## Dietary needs (vegetarian / vegan / gluten-free)
 
 Turned on in Settings, these are treated as hard requirements, not soft
@@ -240,8 +308,13 @@ js/ai.js             Optional Gemini-powered recipe suggestions
 js/spoonacular.js     Spoonacular integration (recommended source, bulk prefetch)
 js/mealdb.js          TheMealDB integration (free, keyless fallback)
 js/app.js            UI rendering, swipe gestures, event wiring
+js/sync.js            Household sync client (local-first)
 js/version.js        App version shown in Settings
 icons/               Generated app icons (apple-touch-icon + PWA icons)
+worker/index.js      Cloudflare Worker: household sync endpoints
+worker/sync-merge.js Merge logic (pure, unit-tested)
+worker/schema.sql    D1 schema
+wrangler.toml        Worker + D1 config
 ```
 
 ## Versioning & auto-update

@@ -44,6 +44,15 @@ export const DEFAULT_SETTINGS = {
   recipeSource: "mealdb",
   spoonacularKey: "",
   geminiKey: "",
+  // Name of an Apple Shortcut that adds its text input to a Reminders list.
+  // Set it and the export creates one reminder per item; leave it empty and
+  // the export falls back to the iOS share sheet.
+  remindersShortcut: "",
+  // Household sync (optional). Empty = this device keeps to itself.
+  // The endpoint is your deployed Cloudflare Worker; the code identifies
+  // the household. Neither is shared with any recipe source.
+  syncEndpoint: "",
+  householdCode: "",
 };
 
 export const Store = {
@@ -79,6 +88,15 @@ export const Store = {
   },
   setHistory(h) {
     write("history", h);
+  },
+  getShoppingChecked() {
+    // { "name|unit": { checked: true, at: <ms> } } — the timestamp is what
+    // lets two phones in the shop merge their ticks per item instead of
+    // one overwriting the other.
+    return read("shoppingChecked", {});
+  },
+  setShoppingChecked(map) {
+    write("shoppingChecked", map);
   },
   getWebRecipeCache() {
     // Recipes already fetched from Gemini/TheMealDB, kept across sessions so
