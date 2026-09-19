@@ -666,14 +666,19 @@ const MEAL_ORDER = ["breakfast", "lunch", "dinner"];
 
 function mealRowHtml(day, dayIndex, meal, recipe) {
   const liked = state.prefs[recipe.id] === 1;
+  // Swiped left in Discover. It's already excluded from future plans, but
+  // it can still be sitting in the week that was generated before you
+  // skipped it — so grey it out here rather than letting it look like any
+  // other meal. Tapping the heart clears it; the reroll button swaps it.
+  const disliked = state.prefs[recipe.id] === -1;
   const img = recipe.image
     ? `<img class="meal-thumb" src="${recipe.image}" alt="" onerror="this.style.background='linear-gradient(135deg,var(--accent),var(--accent-2))'; this.removeAttribute('src')">`
     : placeholderMark("meal-thumb");
   return `
-    <div class="meal-row" data-day="${dayIndex}" data-meal="${meal}" data-recipe="${recipe.id}">
+    <div class="meal-row ${disliked ? "disliked" : ""}" data-day="${dayIndex}" data-meal="${meal}" data-recipe="${recipe.id}">
       ${img}
       <div class="meal-info">
-        <div class="meal-label">${meal}</div>
+        <div class="meal-label">${meal}${disliked ? ` <span class="skipped-tag">skipped</span>` : ""}</div>
         <div class="meal-title">${recipe.title}</div>
         <div class="meal-meta">${minutesLabel(recipe)} · ${recipe.nutrition.kcal} kcal</div>
       </div>
@@ -836,13 +841,17 @@ function drawStack(pool) {
     .forEach((recipe, i) => {
       const isTop = i === slice.length - 1;
       const card = document.createElement("div");
-      card.className = "swipe-card";
+      // Already swiped left before — come back round to it and it reads as
+      // greyed out rather than looking like a fresh suggestion.
+      const disliked = state.prefs[recipe.id] === -1;
+      card.className = `swipe-card ${disliked ? "disliked" : ""}`;
       card.style.transform = isTop ? "none" : "scale(0.96) translateY(10px)";
       card.style.zIndex = isTop ? 2 : 1;
       card.innerHTML = `
         <div class="photo" style="${recipe.image ? `background-image:url('${recipe.image}')` : ""}">
           ${recipe.image ? "" : placeholderMark("fill")}
           <span class="badge">${minutesLabel(recipe)}</span>
+          ${disliked ? `<span class="badge skipped-badge">skipped · not in your week</span>` : ""}
           <span class="stamp like">Yum</span>
           <span class="stamp nope">Skip</span>
         </div>

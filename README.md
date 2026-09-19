@@ -64,7 +64,11 @@ the same as running it locally.
   target (Mifflin-St Jeor BMR × activity level, adjustable goal).
 - **Discover tab** — Tinder-style swipe cards per meal type; swipe or tap to
   like/skip, which feeds back into future plan generation. Tap a card's
-  title/details to see the full recipe.
+  title/details to see the full recipe. A recipe you've swiped left on is
+  **greyed out** rather than hidden — in the deck when you come back round
+  to it, and in the Plan tab if it's still sitting in the week that was
+  generated before you skipped it, marked "skipped". Tapping the heart
+  un-skips it; the reroll button swaps it out.
 - **Shopping tab** — the whole plan's ingredients combined, scaled by
   household size, grouped by aisle/category, with a tag on any ingredient
   reused across multiple meals. Recomputed from scratch on every visit, so

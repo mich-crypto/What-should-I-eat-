@@ -416,6 +416,37 @@ h2.section-title:first-child { margin-top: 4px; }
 .modal-actions button svg { width: 16px; height: 16px; fill: currentColor; }
 .modal-actions button.liked { color: var(--accent); border-color: var(--accent); }
 
+/* ---------- Skipped (swiped left) ---------- */
+/* Greyed, not hidden: you can still see what you rejected, and undo it by
+   tapping the heart. Kept legible rather than faded to nothing. */
+.meal-row.disliked .meal-thumb,
+.meal-row.disliked .meal-title,
+.meal-row.disliked .meal-meta {
+  filter: grayscale(1);
+  opacity: 0.45;
+}
+.skipped-tag {
+  display: inline-block;
+  font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-dim);
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: 0 5px; margin-left: 4px;
+  vertical-align: 1px;
+}
+.swipe-card.disliked .photo,
+.swipe-card.disliked .body .title,
+.swipe-card.disliked .body .meta {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+/* Specificity has to match `.swipe-card .photo .badge`, or `top` there wins
+   and this lands on top of the cook-time badge. */
+.swipe-card .photo .badge.skipped-badge {
+  top: auto; bottom: 12px; left: 12px;
+  background: rgba(0, 0, 0, 0.62);
+  text-transform: uppercase; letter-spacing: 0.05em; font-size: 10px;
+}
+
 /* ---------- "No photo for this dish" placeholder ---------- */
 /* Reads as an intentional mark rather than a failed image load. */
 .photo-placeholder {
