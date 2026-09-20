@@ -53,9 +53,19 @@ registerSessionRecipes(Store.getWebRecipeCache());
  * the Plan tab blank, so validate on load and silently regenerate if
  * anything doesn't check out.
  */
+/** A slot you've deliberately cleared ("no meal planned"), vs. a broken one. */
+function isClearedSlot(slot) {
+  return !!slot && slot.cleared === true;
+}
+
 function planIsValid(plan) {
   if (!plan || !Array.isArray(plan.days) || plan.days.length === 0) return false;
-  return plan.days.every((day) => MEAL_ORDER_FOR_VALIDATION.every((m) => day[m] && recipeById(day[m].recipeId)));
+  // A cleared slot is valid on purpose — without this, deliberately having
+  // no meal on Friday would look like a corrupt plan and the whole week
+  // would be regenerated from under you on the next load.
+  return plan.days.every((day) =>
+    MEAL_ORDER_FOR_VALIDATION.every((m) => day[m] && (isClearedSlot(day[m]) || recipeById(day[m].recipeId)))
+  );
 }
 const MEAL_ORDER_FOR_VALIDATION = ["breakfast", "lunch", "dinner"];
 
@@ -665,6 +675,25 @@ const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MEAL_ORDER = ["breakfast", "lunch", "dinner"];
 
 function mealRowHtml(day, dayIndex, meal, recipe) {
+  // Deliberately no meal here — eating out, leftovers, skipping breakfast.
+  // Its ingredients are out of the shopping list and its calories are out
+  // of the day's totals; tap to plan something after all.
+  if (isClearedSlot(day[meal])) {
+    return `
+      <div class="meal-row cleared" data-day="${dayIndex}" data-meal="${meal}">
+        <div class="row-inner">
+          <div class="meal-thumb cleared-thumb" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M19 13H5v-2h14v2z"/></svg>
+          </div>
+          <div class="meal-info">
+            <div class="meal-label">${meal}</div>
+            <div class="meal-title cleared-title">No meal planned</div>
+            <div class="meal-meta">Tap to plan something</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
   const liked = state.prefs[recipe.id] === 1;
   // Swiped left in Discover. It's already excluded from future plans, but
   // it can still be sitting in the week that was generated before you
@@ -676,19 +705,25 @@ function mealRowHtml(day, dayIndex, meal, recipe) {
     : placeholderMark("meal-thumb");
   return `
     <div class="meal-row ${disliked ? "disliked" : ""}" data-day="${dayIndex}" data-meal="${meal}" data-recipe="${recipe.id}">
-      ${img}
-      <div class="meal-info">
-        <div class="meal-label">${meal}${disliked ? ` <span class="skipped-tag">skipped</span>` : ""}</div>
-        <div class="meal-title">${recipe.title}</div>
-        <div class="meal-meta">${minutesLabel(recipe)} · ${recipe.nutrition.kcal} kcal</div>
+      <div class="row-reveal" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M19 13H5v-2h14v2z"/></svg>
+        <span>No meal</span>
       </div>
-      <div class="meal-actions">
-        <button class="mini-btn like-slot ${liked ? "liked" : ""}" title="Like">
-          <svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.6-10-9.3C.5 8.2 2.3 4.8 5.7 4.2c2-.3 3.9.6 5 2.2 1.1-1.6 3-2.5 5-2.2 3.4.6 5.2 4 3.7 7.5C19.5 16.4 12 21 12 21z"/></svg>
-        </button>
-        <button class="mini-btn reroll-slot" title="Try another">
-          <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.74 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
-        </button>
+      <div class="row-inner">
+        ${img}
+        <div class="meal-info">
+          <div class="meal-label">${meal}${disliked ? ` <span class="skipped-tag">skipped</span>` : ""}</div>
+          <div class="meal-title">${recipe.title}</div>
+          <div class="meal-meta">${minutesLabel(recipe)} · ${recipe.nutrition.kcal} kcal</div>
+        </div>
+        <div class="meal-actions">
+          <button class="mini-btn like-slot ${liked ? "liked" : ""}" title="Like">
+            <svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.6-10-9.3C.5 8.2 2.3 4.8 5.7 4.2c2-.3 3.9.6 5 2.2 1.1-1.6 3-2.5 5-2.2 3.4.6 5.2 4 3.7 7.5C19.5 16.4 12 21 12 21z"/></svg>
+          </button>
+          <button class="mini-btn reroll-slot" title="Try another">
+            <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.74 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+          </button>
+        </div>
       </div>
     </div>`;
 }
@@ -715,7 +750,9 @@ function renderPlan() {
       // that's since ended) — repair it on the fly instead of crashing
       // the whole tab on a missing .title/.nutrition lookup below.
       MEAL_ORDER.forEach((m) => {
-        if (!recipeById(day[m]?.recipeId)) {
+        // Leave cleared slots alone — "repairing" one would put a meal back
+        // the moment you cleared it.
+        if (!isClearedSlot(day[m]) && !recipeById(day[m]?.recipeId)) {
           regenerateSlot(state.plan, i, m, state);
           repaired = true;
         }
@@ -766,12 +803,103 @@ function renderPlan() {
   });
 
   view.querySelectorAll(".meal-row").forEach((row) => {
+    const dayIndex = Number(row.dataset.day);
+    const meal = row.dataset.meal;
+
     row.addEventListener("click", (e) => {
       if (e.target.closest(".mini-btn")) return; // like/reroll handle their own clicks
+      if (row.dataset.swiped === "1") return; // that was a swipe, not a tap
+      if (row.classList.contains("cleared")) return planMealAgain(dayIndex, meal);
       const recipe = recipeById(row.dataset.recipe);
       if (recipe) openRecipeModal(recipe);
     });
+
+    if (!row.classList.contains("cleared")) attachRowSwipe(row, dayIndex, meal);
   });
+}
+
+/**
+ * Swipe a meal row left to clear the slot — some days you just don't want a
+ * meal planned (eating out, leftovers, skipping breakfast).
+ *
+ * The fiddly part is coexisting with vertical scrolling: we watch the first
+ * few pixels of movement and only take over the gesture once it's clearly
+ * horizontal, otherwise we let the list scroll normally. The row also sets
+ * a `swiped` flag so the tap handler doesn't fire a modal at the end of a
+ * drag.
+ */
+function attachRowSwipe(row, dayIndex, meal) {
+  const inner = row.querySelector(".row-inner");
+  if (!inner) return;
+
+  const THRESHOLD = 90; // px of travel that commits the clear
+  let startX = 0, startY = 0, dx = 0;
+  let pointerId = null, axis = null; // null = undecided, 'x' = ours, 'y' = let it scroll
+
+  const reset = (animate) => {
+    inner.style.transition = animate ? "transform 0.2s ease" : "none";
+    inner.style.transform = "";
+    row.classList.remove("swiping");
+  };
+
+  row.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".mini-btn")) return;
+    pointerId = e.pointerId;
+    startX = e.clientX; startY = e.clientY; dx = 0; axis = null;
+    row.dataset.swiped = "0";
+    inner.style.transition = "none";
+  });
+
+  row.addEventListener("pointermove", (e) => {
+    if (e.pointerId !== pointerId) return;
+    const mx = e.clientX - startX;
+    const my = e.clientY - startY;
+
+    if (axis === null) {
+      if (Math.abs(mx) < 6 && Math.abs(my) < 6) return; // too early to tell
+      axis = Math.abs(mx) > Math.abs(my) ? "x" : "y";
+      if (axis === "x") {
+        row.classList.add("swiping");
+        row.setPointerCapture?.(pointerId); // keep events even if the finger leaves the row
+      }
+    }
+    if (axis !== "x") return; // vertical: leave the list to scroll
+
+    dx = Math.min(0, mx); // left only — dragging right does nothing
+    inner.style.transform = `translateX(${dx}px)`;
+    if (Math.abs(dx) > 4) row.dataset.swiped = "1";
+  });
+
+  const finish = (e) => {
+    if (e.pointerId !== pointerId) return;
+    pointerId = null;
+    if (axis !== "x") return reset(false);
+    if (Math.abs(dx) >= THRESHOLD) {
+      clearMealSlot(dayIndex, meal); // re-renders, so no need to animate back
+      return;
+    }
+    reset(true);
+    // Let the click that follows a short drag through as a normal tap.
+    setTimeout(() => { row.dataset.swiped = "0"; }, 0);
+  };
+  row.addEventListener("pointerup", finish);
+  row.addEventListener("pointercancel", finish);
+}
+
+/** No meal planned for this slot. Drops out of the shopping list and the day's totals. */
+function clearMealSlot(dayIndex, meal) {
+  const previous = state.plan.days[dayIndex][meal];
+  state.plan.days[dayIndex][meal] = { cleared: true };
+  savePlan();
+  renderPlan();
+  toast("No meal planned — tap the row to add one back");
+  return previous;
+}
+
+/** Put a meal back into a slot you'd cleared. */
+async function planMealAgain(dayIndex, meal) {
+  state.plan.days[dayIndex][meal] = { recipeId: null, locked: false };
+  await rerollSlot(dayIndex, meal); // picks from the pool/source and re-renders
 }
 
 // ---------------------------------------------------------------- Discover tab (swipe)

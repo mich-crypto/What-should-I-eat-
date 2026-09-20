@@ -61,7 +61,13 @@ the same as running it locally.
 
 - **Plan tab** — a 7- or 14-day grid of breakfast/lunch/dinner, each day's
   running totals for calories/protein/carbs/fat plotted against a personal
-  target (Mifflin-St Jeor BMR × activity level, adjustable goal).
+  target (Mifflin-St Jeor BMR × activity level, adjustable goal). **Swipe a
+  meal row left** to clear that slot when you're not cooking then — eating
+  out, leftovers, skipping breakfast. The row stays in place as an empty
+  "No meal planned" placeholder, drops straight out of the day's nutrition
+  totals and the shopping list, and survives a reload; tap it to plan
+  something there again. Vertical scrolling is untouched (`touch-action:
+  pan-y`), so the gesture is only claimed once it's clearly horizontal.
 - **Discover tab** — Tinder-style swipe cards per meal type; swipe or tap to
   like/skip, which feeds back into future plan generation. Tap a card's
   title/details to see the full recipe. A recipe you've swiped left on is
