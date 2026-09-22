@@ -1077,9 +1077,23 @@ function isChecked(key) {
   return !!state.shoppingChecked[key]?.checked;
 }
 
+/**
+ * A ticked-off item, by its merge key.
+ *
+ * Ticks used to be stored under the *displayed* "name|unit", which broke
+ * twice over: two spellings of one ingredient were two separate ticks, and
+ * a row whose label or unit changed (because a swapped meal shifted which
+ * wording was most common) lost its tick. They're stored under the stable
+ * canonical key now; the old key is still read so ticks already on a phone
+ * survive this upgrade.
+ */
+function isItemChecked(item) {
+  return isChecked(item.key) || isChecked(`${item.name}|${item.unit}`);
+}
+
 function renderShopping() {
   const list = buildShoppingList(state.plan, state.settings.persons);
-  const checkedCount = list.items.filter((i) => isChecked(`${i.name}|${i.unit}`)).length;
+  const checkedCount = list.items.filter(isItemChecked).length;
 
   const groups = Object.keys(list.grouped)
     .map(
@@ -1088,13 +1102,13 @@ function renderShopping() {
       <div class="card">
         ${list.grouped[cat]
           .map((item) => {
-            const key = `${item.name}|${item.unit}`;
-            const checked = isChecked(key);
+            const key = item.key;
+            const checked = isItemChecked(item);
             return `
-            <div class="shop-item ${checked ? "checked" : ""}" data-key="${key}">
+            <div class="shop-item ${checked ? "checked" : ""}" data-key="${key}" data-legacy-key="${item.name}|${item.unit}">
               <div class="checkbox ${checked ? "checked" : ""}">${checked ? '<svg viewBox="0 0 24 24"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>' : ""}</div>
               <div class="name">${item.name}${item.recipeCount > 1 ? `<span class="reuse-tag">used ×${item.recipeCount}</span>` : ""}</div>
-              <div class="qty">${item.qty} ${item.unit}</div>
+              <div class="qty">${item.amount}</div>
             </div>`;
           })
           .join("")}
@@ -1116,9 +1130,15 @@ function renderShopping() {
   view.querySelectorAll(".shop-item").forEach((el) => {
     el.addEventListener("click", () => {
       const key = el.dataset.key;
+      // Read the state off the rendered row, so a tick still stored under
+      // the pre-1.11 "name|unit" key toggles *off* on the first tap instead
+      // of being re-ticked.
+      const next = !el.classList.contains("checked");
       // Record *when* it changed, not just that it did — that timestamp is
       // what lets the other phone's ticks merge instead of overwriting.
-      state.shoppingChecked[key] = { checked: !isChecked(key), at: Date.now() };
+      state.shoppingChecked[key] = { checked: next, at: Date.now() };
+      const legacy = el.dataset.legacyKey;
+      if (legacy && legacy !== key) delete state.shoppingChecked[legacy];
       Store.setShoppingChecked(state.shoppingChecked);
       queueSyncPush();
       renderShopping();
@@ -1141,12 +1161,12 @@ function renderShopping() {
  * Already-ticked items are left out; you don't need to buy those.
  */
 async function exportShoppingList(list) {
-  const remaining = list.items.filter((i) => !isChecked(`${i.name}|${i.unit}`));
+  const remaining = list.items.filter((i) => !isItemChecked(i));
   if (remaining.length === 0) {
     toast("Everything's ticked off already");
     return;
   }
-  const text = remaining.map((i) => `${i.name} — ${i.qty} ${i.unit}`).join("\n");
+  const text = remaining.map((i) => `${i.name} — ${i.amount}`).join("\n");
 
   if (state.settings.remindersShortcut) {
     const name = encodeURIComponent(state.settings.remindersShortcut);

@@ -77,7 +77,11 @@ the same as running it locally.
   un-skips it; the reroll button swaps it out.
 - **Shopping tab** — the whole plan's ingredients combined, scaled by
   household size, grouped by aisle/category, with a tag on any ingredient
-  reused across multiple meals. Recomputed from scratch on every visit, so
+  reused across multiple meals. Ingredients are matched on a canonical form
+  of their name and unit, so the same thing written four different ways by
+  four different recipes ("Water", "water", "Cold water", "2 cups water
+  (room temperature)") is **one row**, with the amounts converted to a
+  common unit and added up — see *Merging ingredients* below. Recomputed from scratch on every visit, so
   swapping a meal drops its now-unused ingredients and adds the new ones —
   matching by name/unit after normalizing casing, plurals and common unit
   wording (e.g. "onions"/"Onion", "grams"/"g"), so the same ingredient
@@ -278,6 +282,57 @@ That's a deliberate trade for a family shopping list — don't reuse the
 pattern for anything sensitive. **API keys never sync**; they stay on the
 device that entered them.
 
+## Merging ingredients
+
+Four recipe sources means four ideas of how to write an ingredient. The
+built-in catalog is tidy metric; Spoonacular reports metric short forms and
+sometimes an empty unit; TheMealDB hands over whatever the original author
+typed (`"1 cup"`, `"2 cloves minced"`, `"to taste"`); Gemini is asked for
+metric and improvises. Combining those by exact string gives you a list with
+`Water 500 ml`, `water 2 cups` and `Cold water 1 l` on three separate lines —
+which is worse than useless, because you can't tell how much water to buy.
+
+`js/shopping.js` therefore merges on a *canonical* form, not the text:
+
+- **The name** is lowercased and stripped of accents, parentheticals and
+  punctuation; prep and size words that don't change what you buy (`fresh`,
+  `large`, `ripe`, `finely chopped`, `divided`, `optional`, …) are removed;
+  plurals are singularized (`tomatoes` → `tomato`, `berries` → `berry`,
+  `leaves` → `leaf`, but `cloves` → `clove`); a few cross-Atlantic synonyms
+  are unified (`scallion`/`spring onion`, `cilantro`/`coriander`,
+  `aubergine`/`eggplant`, `prawn`/`shrimp`); and the remaining words are
+  sorted, so word order stops mattering (`oil, olive` == `olive oil`).
+- **The unit** is resolved to a canonical name — including out of free text,
+  so `"200g chopped"` measures in grams and `"2 cloves minced"` in cloves —
+  and then to a *conversion class*: mass (base: g), volume (base: ml),
+  `to taste`, or a countable that can't be converted into anything else.
+  Mass and volume units are converted to their base and summed, so `500 ml`
+  + `2 cups` is one row of `980 ml`.
+- **The display** is a vote, not first-past-the-post: the wording and unit
+  most recipes used win, so a row's label doesn't flip about as meals are
+  swapped. Amounts scale up when they get long (`1200 g` → `1.2 kg`),
+  countables pluralize (`4 stalks`), and whole things round up — you can't
+  buy 1.8 avocados, which is what scaling a recipe to an odd household size
+  otherwise asks you to do.
+- **`"to taste"`** carries no quantity, so it can't be summed. If any other
+  recipe gives a real measure for the same ingredient, the to-taste row is
+  folded into it — otherwise the list shows `Salt 2 tsp` *and* `Salt to
+  taste` as two things to buy.
+
+What is deliberately **not** merged: anything where the modifier changes the
+product. `ground beef` ≠ `beef`, `whole milk` ≠ `milk`, `smoked paprika` ≠
+`paprika`, `canned tomatoes` ≠ `tomatoes`, `sweet potato` ≠ `potato`,
+`bread flour` ≠ `flour`, `coconut milk` ≠ `milk`. A wrong merge hides an
+ingredient you actually need, which is worse than a duplicate row, so the
+rules are conservative: a word the singularizer doesn't recognize is left
+alone rather than guessed at.
+
+Checkbox state is keyed on the canonical key too. It used to be keyed on the
+displayed `name|unit`, which broke twice over: two spellings of one
+ingredient were two separate ticks, and a row whose label changed lost its
+tick. Ticks stored under the old keys are still read once, so upgrading
+doesn't clear your list mid-shop.
+
 ## Send the shopping list to iPhone Reminders
 
 The Shopping tab has a **Send list to Reminders** button. Already-ticked
@@ -317,7 +372,7 @@ js/data.js           Sample recipe catalog
 js/storage.js        localStorage wrapper (settings/plan/prefs/history/web recipe cache)
 js/nutrition.js      BMR/TDEE + macro targets
 js/planner.js        Weekly plan generation & single-slot regeneration
-js/shopping.js       Ingredient aggregation into a shopping list
+js/shopping.js       Ingredient canonicalization + aggregation into a shopping list
 js/ai.js             Optional Gemini-powered recipe suggestions
 js/spoonacular.js     Spoonacular integration (recommended source, bulk prefetch)
 js/mealdb.js          TheMealDB integration (free, keyless fallback)
